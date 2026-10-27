@@ -9,7 +9,7 @@ Petit site statique (HTML/CSS/JS) hébergé sur GitHub Pages pour planifier les 
 
 - `index.html`, `style.css`, `app.js` : le site.
 - `supabase/schema.sql` : tables et fonctions de la base (installation neuve).
-- `supabase/migrations/` : scripts à exécuter, dans l'ordre, sur une base déjà installée.
+- `supabase/migrations/` : scripts à exécuter, dans l'ordre (001, 002, 003…), sur une base déjà installée. `schema.sql` est l'état final, pour une installation neuve (pas besoin des migrations dans ce cas).
 - `test/` : version du site avec une fausse API en mémoire, pour essayer l'interface sans Supabase (ouvrir `test/index.html` ; identifiant / mot de passe : `reader` / `r`, `writer` / `w`, `admin` / `a`). Non utilisée par le vrai site.
 
 La sécurité repose sur la base : les tables sont verrouillées (RLS sans policy) et le site n'y accède que via des fonctions qui vérifient l'identifiant et le mot de passe (stocké haché) **et** le rôle autorisé pour chaque action. L'URL et la clé `sb_publishable_…` présentes dans le code sont publiques par conception. **Ne jamais commiter** la clé `sb_secret_…`, le mot de passe de la base ni les mots de passe du site.
@@ -39,8 +39,12 @@ Le site ne permet pas ces actions, elles se font dans Supabase (**SQL Editor**) 
 -- Créer une classe (name : 1re lettre en majuscule ; part_name : minuscules)
 insert into food.classes (name, part_name, position) values ('Boissons', 'boisson', 6);
 
--- Supprimer une classe (d'abord ses aliments, qui ne doivent plus être dans aucun repas)
-delete from food.foods where class_id = 6;
+-- Supprimer une classe : d'abord les aliments qui n'ont que cette classe (ils ne doivent plus
+-- être dans aucun repas), puis le lien des autres aliments avec cette classe, puis la classe
+delete from food.foods f
+where exists (select 1 from food.food_classes where food_id = f.id and class_id = 6)
+  and (select count(*) from food.food_classes where food_id = f.id) = 1;
+delete from food.food_classes where class_id = 6;
 delete from food.classes where id = 6;
 
 -- Supprimer tous les aliments (vide d'abord les repas)
@@ -68,8 +72,21 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
 ## Règles de données
 
 - Aliments, noms de repas (`midi`, `soir`) et parties de repas en minuscules ; classes avec une majuscule initiale.
-- Un aliment appartient à une seule classe ; deux noms identiques (même casse) sont refusés. « creme » et « crème » sont deux aliments différents.
-- Un aliment utilisé dans un repas ne peut être ni supprimé ni changé de classe. Le renommer le renomme dans tous les repas.
+- Un aliment a une ou plusieurs classes (ex. un sandwich : Protéines, Féculents, Légumes), table `food.food_classes`. Il remplit toutes les parties de repas correspondantes à la fois et n'est compté qu'une fois dans le repas.
+- Le nom d'un aliment est unique : deux noms identiques (même casse) sont refusés, même avec des classes différentes. « creme » et « crème » sont deux aliments différents. Pour une variante, créer un aliment distinct.
+- Un aliment utilisé dans un repas ne peut pas être supprimé, et on ne peut pas lui retirer de classe (on peut en ajouter). Le renommer le renomme dans tous les repas.
+- Pour analyser les données, un repas passé compte les classes **actuelles** de ses aliments. Exemple, nombre de repas par classe sur les 30 derniers jours :
+
+  ```sql
+  select c.name, count(distinct m.id) as repas
+  from food.meals m
+  join food.meal_items mi on mi.meal_id = m.id
+  join food.food_classes fc on fc.food_id = mi.food_id
+  join food.classes c on c.id = fc.class_id
+  where m.meal_date >= current_date - 30
+  group by c.name, c.position
+  order by c.position;
+  ```
 - Le site affiche les 15 derniers jours et les 30 prochains. Les repas passés sont gardés 30 jours en base puis supprimés automatiquement, mais seulement quand quelqu'un enregistre ou vide un repas (quel que soit le jour modifié). Il en va de même pour la purge du journal d'audit (12 mois).
 - « Aujourd'hui » est calculé en heure de Zurich.
 

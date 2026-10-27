@@ -29,14 +29,22 @@ create table if not exists food.classes (
   position  smallint not null default 0
 );
 
--- Un aliment appartient à une seule classe ; son nom est unique et en minuscules.
+-- Un aliment : son nom est unique et en minuscules.
 create table if not exists food.foods (
   id         bigint generated always as identity primary key,
   name       text     not null unique
              check (name = lower(name) and name = btrim(name) and name <> ''),
-  class_id   smallint not null references food.classes (id) on delete restrict,
   created_at timestamptz not null default now()
 );
+
+-- Classes d'un aliment : un aliment peut en avoir plusieurs (ex. un sandwich est à la fois
+-- protéines, féculents et légumes). Les fonctions exigent au moins une classe par aliment.
+create table if not exists food.food_classes (
+  food_id  bigint   not null references food.foods (id) on delete cascade,
+  class_id smallint not null references food.classes (id) on delete restrict,
+  primary key (food_id, class_id)
+);
+create index if not exists food_classes_class_idx on food.food_classes (class_id);
 
 -- Un repas = un jour + midi ou soir. Un repas vide n'a pas de ligne.
 create table if not exists food.meals (
@@ -46,8 +54,8 @@ create table if not exists food.meals (
   unique (meal_date, slot)
 );
 
--- Aliments d'un repas. La partie du repas se déduit de la classe de l'aliment :
--- un aliment ne peut donc jamais se retrouver dans la mauvaise partie.
+-- Aliments d'un repas. Les parties du repas qu'un aliment remplit se déduisent de ses
+-- classes : un aliment ne peut donc jamais se retrouver dans une mauvaise partie.
 create table if not exists food.meal_items (
   meal_id bigint not null references food.meals (id) on delete cascade,
   food_id bigint not null references food.foods (id) on delete restrict,
@@ -59,7 +67,7 @@ create index if not exists meal_items_food_idx on food.meal_items (food_id);
 -- Les consultations, les connexions, les actions refusées, la purge automatique et ce qui est
 -- fait directement en SQL n'y figurent pas. Conservé 12 mois (voir _purge_old_data).
 -- target : "2026-10-28 soir" pour un repas, nom de l'aliment pour un aliment.
--- before / after : liste des noms d'aliments (repas) ou { name, class } (aliment).
+-- before / after : liste des noms d'aliments (repas) ou { name, classes: [noms] } (aliment).
 create table if not exists food.audit_log (
   id      bigint generated always as identity primary key,
   logged_at timestamptz not null default now(),
@@ -86,12 +94,13 @@ on conflict do nothing;
 -- et uniquement avec un identifiant et un mot de passe dont le rôle est autorisé.
 alter table food.users      enable row level security;
 alter table food.classes    enable row level security;
-alter table food.foods      enable row level security;
-alter table food.meals      enable row level security;
-alter table food.meal_items enable row level security;
-alter table food.audit_log  enable row level security;
-revoke all on food.users, food.classes, food.foods, food.meals, food.meal_items, food.audit_log
-  from anon, authenticated;
+alter table food.foods        enable row level security;
+alter table food.food_classes enable row level security;
+alter table food.meals        enable row level security;
+alter table food.meal_items   enable row level security;
+alter table food.audit_log    enable row level security;
+revoke all on food.users, food.classes, food.foods, food.food_classes, food.meals,
+  food.meal_items, food.audit_log from anon, authenticated;
 
 -- ------------------------------------------------------ Fonctions internes
 -- Rôle de l'utilisateur ('read', 'write', 'admin'), ou null si l'identifiant ou le mot de
@@ -197,7 +206,9 @@ begin
                   'id', c.id, 'name', c.name, 'part_name', c.part_name)
                   order by c.position, c.id), '[]'::jsonb) from food.classes c),
     'foods',   (select coalesce(jsonb_agg(jsonb_build_object(
-                  'id', f.id, 'name', f.name, 'class_id', f.class_id)
+                  'id', f.id, 'name', f.name,
+                  'class_ids', (select coalesce(jsonb_agg(fc.class_id order by fc.class_id), '[]'::jsonb)
+                                from food.food_classes fc where fc.food_id = f.id))
                   order by f.name), '[]'::jsonb) from food.foods f)
   );
 end;
@@ -205,7 +216,7 @@ $$;
 
 -- Repas entre deux dates incluses (tous rôles). Une ligne par aliment.
 create or replace function food.get_meals(u text, p text, d_from date, d_to date)
-returns table (meal_date date, slot text, food_id bigint, food_name text, class_id smallint)
+returns table (meal_date date, slot text, food_id bigint, food_name text, class_ids smallint[])
 language plpgsql
 security definer
 set search_path = food, extensions
@@ -213,7 +224,9 @@ as $$
 begin
   perform food._check(u, p, array['read', 'write', 'admin']);
   return query
-    select m.meal_date, m.slot, f.id, f.name, f.class_id
+    select m.meal_date, m.slot, f.id, f.name,
+           (select array_agg(fc.class_id order by fc.class_id)
+            from food.food_classes fc where fc.food_id = f.id)
     from food.meals m
     join food.meal_items mi on mi.meal_id = m.id
     join food.foods f on f.id = mi.food_id
@@ -284,8 +297,44 @@ begin
 end;
 $$;
 
--- Ajoute un aliment (rôle admin uniquement).
-create or replace function food.add_food(u text, p text, n text, cid smallint)
+-- Classes d'un aliment : liste normalisée (sans doublon, triée). Refuse une liste vide
+-- ('invalid_classes') ou contenant une classe inconnue ('unknown_class').
+create or replace function food._clean_classes(cids smallint[])
+returns smallint[]
+language plpgsql
+security definer
+set search_path = food
+as $$
+declare
+  ids smallint[];
+begin
+  select coalesce(array_agg(distinct x order by x), '{}') into ids
+  from unnest(coalesce(cids, '{}')) x
+  where x is not null;
+  if cardinality(ids) = 0 then
+    raise exception 'invalid_classes';
+  end if;
+  if (select count(*) from food.classes where id = any (ids)) <> cardinality(ids) then
+    raise exception 'unknown_class';
+  end if;
+  return ids;
+end;
+$$;
+
+-- Noms des classes (dans l'ordre d'affichage) sous forme de tableau JSON, pour l'audit.
+create or replace function food._class_names(ids smallint[])
+returns jsonb
+language sql
+security definer
+set search_path = food
+as $$
+  select coalesce(jsonb_agg(c.name order by c.position, c.id), '[]'::jsonb)
+  from food.classes c
+  where c.id = any (ids);
+$$;
+
+-- Ajoute un aliment avec une ou plusieurs classes (rôle admin uniquement).
+create or replace function food.add_food(u text, p text, n text, cids smallint[])
 returns bigint
 language plpgsql
 security definer
@@ -294,33 +343,29 @@ as $$
 declare
   r text;
   name_ text := lower(btrim(coalesce(n, '')));
-  existing smallint;
-  class_name text;
+  ids smallint[];
   new_id bigint;
 begin
   r := food._check(u, p, array['admin']);
   if name_ = '' or char_length(name_) > 60 then
     raise exception 'invalid_name';
   end if;
-  select c.name into class_name from food.classes c where c.id = cid;
-  if not found then
-    raise exception 'unknown_class';
+  ids := food._clean_classes(cids);
+  if exists (select 1 from food.foods where name = name_) then
+    raise exception 'food_exists';
   end if;
-  select class_id into existing from food.foods where name = name_;
-  if found then
-    raise exception '%', case when existing = cid then 'food_exists' else 'food_exists_other_class' end;
-  end if;
-  insert into food.foods (name, class_id) values (name_, cid) returning id into new_id;
+  insert into food.foods (name) values (name_) returning id into new_id;
+  insert into food.food_classes (food_id, class_id) select new_id, unnest(ids);
   perform food._audit(u, r, 'food_add', name_, null,
-                      jsonb_build_object('name', name_, 'class', class_name));
+                      jsonb_build_object('name', name_, 'classes', food._class_names(ids)));
   return new_id;
 end;
 $$;
 
--- Modifie le nom et/ou la classe d'un aliment (rôle admin uniquement).
+-- Modifie le nom et/ou les classes d'un aliment (rôle admin uniquement).
 -- Les repas qui l'utilisent suivent automatiquement (ils pointent vers l'id).
--- Changer la classe d'un aliment déjà utilisé est refusé.
-create or replace function food.update_food(u text, p text, fid bigint, n text, cid smallint)
+-- Sur un aliment déjà utilisé dans des repas, on peut ajouter des classes mais pas en retirer.
+create or replace function food.update_food(u text, p text, fid bigint, n text, cids smallint[])
 returns void
 language plpgsql
 security definer
@@ -329,40 +374,37 @@ as $$
 declare
   r text;
   name_ text := lower(btrim(coalesce(n, '')));
+  ids smallint[];
   old_name text;
-  old_class smallint;
-  old_class_name text;
-  new_class_name text;
-  other_class smallint;
+  old_ids smallint[];
 begin
   r := food._check(u, p, array['admin']);
   if name_ = '' or char_length(name_) > 60 then
     raise exception 'invalid_name';
   end if;
-  select f.name, f.class_id, c.name into old_name, old_class, old_class_name
-  from food.foods f join food.classes c on c.id = f.class_id
-  where f.id = fid;
+  select f.name into old_name from food.foods f where f.id = fid;
   if not found then
     raise exception 'unknown_food';
   end if;
-  select c.name into new_class_name from food.classes c where c.id = cid;
-  if not found then
-    raise exception 'unknown_class';
+  ids := food._clean_classes(cids);
+  select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_ids
+  from food.food_classes fc where fc.food_id = fid;
+  if exists (select 1 from food.foods where name = name_ and id <> fid) then
+    raise exception 'food_exists';
   end if;
-  select class_id into other_class from food.foods where name = name_ and id <> fid;
-  if found then
-    raise exception '%', case when other_class = cid then 'food_exists' else 'food_exists_other_class' end;
-  end if;
-  if cid <> old_class and exists (select 1 from food.meal_items where food_id = fid) then
+  if not (old_ids <@ ids) and exists (select 1 from food.meal_items where food_id = fid) then
     raise exception 'food_in_use_class';
   end if;
 
   -- Rien n'est écrit (ni consigné) si l'aliment ne change pas.
-  if name_ <> old_name or cid <> old_class then
-    update food.foods set name = name_, class_id = cid where id = fid;
+  if name_ <> old_name or ids <> old_ids then
+    update food.foods set name = name_ where id = fid;
+    delete from food.food_classes where food_id = fid and not (class_id = any (ids));
+    insert into food.food_classes (food_id, class_id) select fid, unnest(ids)
+    on conflict do nothing;
     perform food._audit(u, r, 'food_update', old_name,
-                        jsonb_build_object('name', old_name, 'class', old_class_name),
-                        jsonb_build_object('name', name_, 'class', new_class_name));
+                        jsonb_build_object('name', old_name, 'classes', food._class_names(old_ids)),
+                        jsonb_build_object('name', name_, 'classes', food._class_names(ids)));
   end if;
 end;
 $$;
@@ -378,20 +420,20 @@ declare
   r text;
   n integer;
   old_name text;
-  old_class_name text;
+  old_ids smallint[];
 begin
   r := food._check(u, p, array['admin']);
   select count(*) into n from food.meal_items where food_id = fid;
   if n > 0 then
     raise exception 'food_in_use' using detail = n::text;
   end if;
-  select f.name, c.name into old_name, old_class_name
-  from food.foods f join food.classes c on c.id = f.class_id
-  where f.id = fid;
+  select f.name into old_name from food.foods f where f.id = fid;
   if found then
+    select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_ids
+    from food.food_classes fc where fc.food_id = fid;
     delete from food.foods where id = fid;
     perform food._audit(u, r, 'food_delete', old_name,
-                        jsonb_build_object('name', old_name, 'class', old_class_name), null);
+                        jsonb_build_object('name', old_name, 'classes', food._class_names(old_ids)), null);
   end if;
 end;
 $$;
@@ -402,19 +444,21 @@ revoke execute on function food._check(text, text, text[])       from public, an
 revoke execute on function food._today()                         from public, anon, authenticated;
 revoke execute on function food._purge_old_data()                from public, anon, authenticated;
 revoke execute on function food._audit(text, text, text, text, jsonb, jsonb) from public, anon, authenticated;
+revoke execute on function food._clean_classes(smallint[])         from public, anon, authenticated;
+revoke execute on function food._class_names(smallint[])           from public, anon, authenticated;
 
 revoke execute on function food.login(text, text)                                      from public;
 revoke execute on function food.get_catalog(text, text)                                from public;
 revoke execute on function food.get_meals(text, text, date, date)                      from public;
 revoke execute on function food.set_meal(text, text, date, text, bigint[])             from public;
-revoke execute on function food.add_food(text, text, text, smallint)                   from public;
-revoke execute on function food.update_food(text, text, bigint, text, smallint)        from public;
+revoke execute on function food.add_food(text, text, text, smallint[])                   from public;
+revoke execute on function food.update_food(text, text, bigint, text, smallint[])        from public;
 revoke execute on function food.delete_food(text, text, bigint)                        from public;
 
 grant execute on function food.login(text, text)                                       to anon, authenticated;
 grant execute on function food.get_catalog(text, text)                                 to anon, authenticated;
 grant execute on function food.get_meals(text, text, date, date)                       to anon, authenticated;
 grant execute on function food.set_meal(text, text, date, text, bigint[])              to anon, authenticated;
-grant execute on function food.add_food(text, text, text, smallint)                    to anon, authenticated;
-grant execute on function food.update_food(text, text, bigint, text, smallint)         to anon, authenticated;
+grant execute on function food.add_food(text, text, text, smallint[])                    to anon, authenticated;
+grant execute on function food.update_food(text, text, bigint, text, smallint[])         to anon, authenticated;
 grant execute on function food.delete_food(text, text, bigint)                         to anon, authenticated;

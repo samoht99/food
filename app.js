@@ -59,7 +59,8 @@ const auth = () => ({ u: userId, p: password });
 let role = "";
 let classes = [];
 let foods = [];
-let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_id }]
+// foods : [{ id, name, class_ids }] ; un aliment peut avoir plusieurs classes (ex. un sandwich).
+let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_ids }]
 let currentTab = "home";
 let today = "";
 let adminClassId = null;
@@ -89,11 +90,13 @@ async function rpc(name, args) {
 
 function errorText(e) {
   switch (e.code) {
-    case "food_exists": return "Cet aliment existe déjà dans cette classe.";
-    case "food_exists_other_class": return "Cet aliment existe déjà dans une autre classe.";
+    case "food_exists": return "Cet aliment existe déjà.";
     case "food_in_use":
       return `Cet aliment est utilisé dans ${e.details || "plusieurs"} repas. Retirez-le de ces repas avant de le supprimer.`;
-    case "food_in_use_class": return "Cet aliment est utilisé dans des repas : sa classe ne peut pas être modifiée.";
+    case "food_in_use_class":
+      return "Cet aliment est utilisé dans des repas : vous pouvez lui ajouter des classes, mais pas en retirer.";
+    case "invalid_classes": return "Choisissez au moins une classe.";
+    case "unknown_class": return "Une classe sélectionnée n'existe plus. Rechargez la page.";
     case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
     case "out_of_window": return "Ce jour n'est pas modifiable.";
     case "unknown_food": return "Un aliment sélectionné n'existe plus. Rechargez la page.";
@@ -146,7 +149,7 @@ async function loadMeals() {
   for (const r of rows) {
     const key = `${r.meal_date}|${r.slot}`;
     if (!meals.has(key)) meals.set(key, []);
-    meals.get(key).push({ id: r.food_id, name: r.food_name, class_id: r.class_id });
+    meals.get(key).push({ id: r.food_id, name: r.food_name, class_ids: r.class_ids || [] });
   }
 }
 
@@ -206,11 +209,23 @@ function mealBlock(date, slot, editable) {
     box.append(el("p", "meal-empty", "vide"));
     return box;
   }
-  for (const c of classes) {
-    const names = items.filter((f) => f.class_id === c.id).map((f) => f.name);
-    if (!names.length) continue;
-    const line = el("p", "meal-line", names.join(", "));
-    line.append(el("span", "cls", c.name));
+  // Les aliments qui ont exactement les mêmes classes sont regroupés sur une ligne
+  // ("poulet, jambon · Protéines") ; un aliment multi-classes apparaît une seule fois
+  // avec toutes ses classes ("sandwich · Protéines, Féculents, Légumes").
+  const pos = (id) => classes.findIndex((c) => c.id === id);
+  const groups = new Map();
+  for (const f of items) {
+    const key = f.class_ids.join(",");
+    if (!groups.has(key)) groups.set(key, { ids: f.class_ids, names: [] });
+    groups.get(key).names.push(f.name);
+  }
+  const ordered = [...groups.values()].sort(
+    (a, b) => Math.min(...a.ids.map(pos)) - Math.min(...b.ids.map(pos)) || a.ids.length - b.ids.length
+  );
+  for (const g of ordered) {
+    const line = el("p", "meal-line", g.names.join(", "));
+    const label = g.ids.map((id) => (classes[pos(id)] || {}).name).filter(Boolean).join(", ");
+    line.append(el("span", "cls", label));
     box.append(line);
   }
   return box;
@@ -307,8 +322,10 @@ function confirmAction(title, detail = "") {
 
 // ---------------------------------------------------------- Choix d'aliments
 // Champ multi-sélection : cadres avec croix + liste déroulante filtrée (« contient »).
-function createPicker(options, selected) {
-  const chosen = new Map(selected.map((f) => [f.id, f]));
+// `chosen` (Map id -> aliment) est partagé entre tous les champs du popup : un aliment multi-classes
+// choisi dans un champ apparaît aussi dans ses autres classes, et l'enlever l'enlève partout.
+// `onChange` rafraîchit tous les champs.
+function createPicker(options, chosen, onChange) {
   const root = el("div", "picker");
   const field = el("div", "picker-field");
   const input = el("input");
@@ -322,14 +339,15 @@ function createPicker(options, selected) {
 
   function renderTags() {
     field.querySelectorAll(".tag").forEach((t) => t.remove());
-    for (const f of chosen.values()) {
+    const mine = options.filter((f) => chosen.has(f.id));
+    for (const f of mine) {
       const tag = el("span", "tag", f.name);
-      const x = button("", "×", () => { chosen.delete(f.id); renderTags(); renderList(); });
+      const x = button("", "×", () => { chosen.delete(f.id); onChange(); });
       x.setAttribute("aria-label", `Retirer ${f.name}`);
       tag.append(x);
       field.insertBefore(tag, input);
     }
-    input.placeholder = chosen.size ? "" : "Choisir…";
+    input.placeholder = mine.length ? "" : "Choisir…";
   }
 
   function renderList() {
@@ -352,8 +370,7 @@ function createPicker(options, selected) {
   function pick(o) {
     chosen.set(o.id, o);
     input.value = "";
-    renderTags();
-    renderList();
+    onChange();
     input.focus();
   }
 
@@ -372,38 +389,39 @@ function createPicker(options, selected) {
     if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
     else if (e.key === "Enter") { e.preventDefault(); if (shown[active]) pick(shown[active]); }
-    else if (e.key === "Backspace" && !input.value && chosen.size) {
-      chosen.delete([...chosen.keys()].pop());
-      renderTags();
-      renderList();
+    else if (e.key === "Backspace" && !input.value) {
+      const mine = options.filter((f) => chosen.has(f.id));
+      if (mine.length) { chosen.delete(mine[mine.length - 1].id); onChange(); }
     }
   });
 
   field.append(input);
   root.append(field, list);
   renderTags();
-  return { el: root, ids: () => [...chosen.keys()] };
+  return { el: root, refresh() { renderTags(); renderList(); } };
 }
 
 // ------------------------------------------------------------ Édition repas
 const mealDialog = $("meal-dialog");
 const mealError = $("meal-error");
 const mealSave = $("meal-save");
-let mealTarget = null; // { date, slot, pickers }
+let mealTarget = null; // { date, slot, chosen, existing }
 
 function openMeal(date, slot) {
   const existing = meals.get(`${date}|${slot}`) || [];
+  const chosen = new Map(existing.map((f) => [f.id, f]));
   const rows = $("meal-rows");
   rows.replaceChildren();
   const pickers = [];
+  const refreshAll = () => pickers.forEach((p) => p.refresh());
   for (const c of classes) {
-    const options = foods.filter((f) => f.class_id === c.id);
-    const picker = createPicker(options, existing.filter((f) => f.class_id === c.id));
+    const options = foods.filter((f) => f.class_ids.includes(c.id));
+    const picker = createPicker(options, chosen, refreshAll);
     pickers.push(picker);
     const label = el("div", "part-label", c.part_name);
     rows.append(label, picker.el);
   }
-  mealTarget = { date, slot, pickers, existing };
+  mealTarget = { date, slot, chosen, existing };
   $("meal-title").textContent = `${fmtDay(date)} · ${slot}`;
   mealError.textContent = "";
   mealSave.disabled = false;
@@ -417,8 +435,8 @@ $("meal-cancel").addEventListener("click", () => mealDialog.close());
 closeOnBackdrop(mealDialog);
 
 mealSave.addEventListener("click", async () => {
-  const { date, slot, pickers, existing } = mealTarget;
-  const ids = pickers.flatMap((p) => p.ids());
+  const { date, slot, chosen, existing } = mealTarget;
+  const ids = [...chosen.keys()];
   const before = existing.map((f) => f.id).sort((a, b) => a - b).join();
   if (ids.slice().sort((a, b) => a - b).join() === before) { mealDialog.close(); return; }
 
@@ -451,6 +469,22 @@ async function clearMeal(date, slot) {
 }
 
 // ------------------------------------------------------------------- Admin
+// Cases à cocher des classes d'un aliment ; box.values() renvoie les identifiants cochés.
+function classChecks(selected) {
+  const box = el("div", "class-checks");
+  for (const c of classes) {
+    const label = el("label", "class-check");
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.value = c.id;
+    cb.checked = selected.has(c.id);
+    label.append(cb, document.createTextNode(c.name));
+    box.append(label);
+  }
+  box.values = () => [...box.querySelectorAll("input:checked")].map((i) => Number(i.value));
+  return box;
+}
+
 function renderAdmin() {
   const root = $("tab-admin");
   if (role !== "admin") { root.replaceChildren(); return; }
@@ -466,7 +500,9 @@ function renderAdmin() {
   }
   root.append(chips);
 
-  const addRow = el("form", "add-row");
+  // Nouvel aliment : un nom et une ou plusieurs classes (la classe affichée est cochée d'office).
+  const addForm = el("form", "add-form");
+  const addRow = el("div", "add-row");
   const addInput = el("input");
   addInput.type = "text";
   addInput.maxLength = 60;
@@ -475,13 +511,17 @@ function renderAdmin() {
   const addBtn = el("button", "btn-primary", "Ajouter");
   addBtn.type = "submit";
   addRow.append(addInput, addBtn);
-  addRow.addEventListener("submit", async (e) => {
+  const addChecks = classChecks(new Set([adminClassId]));
+  addForm.append(addRow, addChecks);
+  addForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = addInput.value.trim().toLowerCase();
     if (!name) return;
+    const cids = addChecks.values();
+    if (!cids.length) { statusEl.textContent = errorText({ code: "invalid_classes" }); return; }
     addBtn.disabled = true;
     try {
-      await rpc("add_food", { ...auth(), n: name, cid: adminClassId });
+      await rpc("add_food", { ...auth(), n: name, cids });
       statusEl.textContent = "";
       await loadCatalog();
       renderAdmin();
@@ -492,7 +532,7 @@ function renderAdmin() {
     }
     addBtn.disabled = false;
   });
-  root.append(addRow);
+  root.append(addForm);
 
   const search = el("input", "search");
   search.type = "search";
@@ -505,7 +545,7 @@ function renderAdmin() {
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
     const rows = foods
-      .filter((f) => f.class_id === adminClassId && f.name.includes(q))
+      .filter((f) => f.class_ids.includes(adminClassId) && f.name.includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
     list.replaceChildren();
     if (!rows.length) {
@@ -515,7 +555,11 @@ function renderAdmin() {
     }
     for (const f of rows) {
       const li = el("li", "food-row");
-      li.append(el("span", "fname", f.name));
+      const name = el("span", "fname", f.name);
+      const others = f.class_ids.filter((id) => id !== adminClassId)
+        .map((id) => (classes.find((c) => c.id === id) || {}).name).filter(Boolean);
+      if (others.length) name.append(el("small", "fmeta", `aussi : ${others.join(", ")}`));
+      li.append(name);
       li.append(button("btn-sm", "Modifier", () => openFoodEdit(f)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteFood(f)));
       list.append(li);
@@ -541,17 +585,13 @@ async function deleteFood(f) {
 const foodDialog = $("food-dialog");
 const foodEditError = $("food-edit-error");
 let editingFood = null;
+let editChecks = null;
 
 function openFoodEdit(f) {
   editingFood = f;
   $("food-edit-name").value = f.name;
-  const sel = $("food-edit-class");
-  sel.replaceChildren(...classes.map((c) => {
-    const o = el("option", "", c.name);
-    o.value = c.id;
-    o.selected = c.id === f.class_id;
-    return o;
-  }));
+  editChecks = classChecks(new Set(f.class_ids));
+  $("food-edit-classes").replaceChildren(editChecks);
   foodEditError.textContent = "";
   foodDialog.showModal();
 }
@@ -561,12 +601,12 @@ closeOnBackdrop(foodDialog);
 $("food-edit-save").addEventListener("click", async () => {
   const name = $("food-edit-name").value.trim().toLowerCase();
   if (!name) { foodEditError.textContent = errorText({ code: "invalid_name" }); return; }
+  const cids = editChecks.values();
+  if (!cids.length) { foodEditError.textContent = errorText({ code: "invalid_classes" }); return; }
   const btn = $("food-edit-save");
   btn.disabled = true;
   try {
-    await rpc("update_food", {
-      ...auth(), fid: editingFood.id, n: name, cid: Number($("food-edit-class").value),
-    });
+    await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids });
     foodDialog.close();
     statusEl.textContent = "";
     await loadAll();

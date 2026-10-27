@@ -20,7 +20,9 @@
   };
   let nextId = 1;
   let foods = [];
-  for (const cid in seed) for (const name of seed[cid]) foods.push({ id: nextId++, name, class_id: Number(cid) });
+  for (const cid in seed) for (const name of seed[cid]) foods.push({ id: nextId++, name, class_ids: [Number(cid)] });
+  foods.push({ id: nextId++, name: "sandwich jambon-salade", class_ids: [1, 2, 3] });
+  foods.push({ id: nextId++, name: "pizza", class_ids: [1, 2, 4] });
   const byName = (n) => foods.find((f) => f.name === n).id;
 
   const meals = new Map(); // "date|slot" -> [food ids]
@@ -39,6 +41,7 @@
   put(0, "midi", ["poulet", "riz", "brocoli", "carotte", "pomme"]);
   put(1, "midi", ["boeuf haché", "pâtes", "épinards", "fromage blanc", "banane"]);
   put(2, "soir", ["jambon", "polenta", "haricots verts"]);
+  put(1, "soir", ["sandwich jambon-salade", "pomme"]);
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
   const ok = (body) => ({ ok: true, json: async () => body });
@@ -65,7 +68,7 @@
           if (d < a.d_from || d > a.d_to) continue;
           for (const id of ids) {
             const f = foods.find((x) => x.id === id);
-            rows.push({ meal_date: d, slot: s, food_id: id, food_name: f.name, class_id: f.class_id });
+            rows.push({ meal_date: d, slot: s, food_id: id, food_name: f.name, class_ids: [...f.class_ids].sort((x, y) => x - y) });
           }
         }
         return ok(rows);
@@ -86,9 +89,11 @@
         if (role !== "admin") return fail("forbidden");
         const name = clean(a.n);
         if (!name || name.length > 60) return fail("invalid_name");
-        const dup = foods.find((f) => f.name === name);
-        if (dup) return fail(dup.class_id === a.cid ? "food_exists" : "food_exists_other_class");
-        foods.push({ id: nextId++, name, class_id: a.cid });
+        const cids = [...new Set(a.cids || [])].sort((x, y) => x - y);
+        if (!cids.length) return fail("invalid_classes");
+        if (cids.some((c) => !classes.some((k) => k.id === c))) return fail("unknown_class");
+        if (foods.some((f) => f.name === name)) return fail("food_exists");
+        foods.push({ id: nextId++, name, class_ids: cids });
         return ok(nextId - 1);
       }
 
@@ -98,12 +103,15 @@
         const f = foods.find((x) => x.id === a.fid);
         if (!name || name.length > 60) return fail("invalid_name");
         if (!f) return fail("unknown_food");
-        const dup = foods.find((x) => x.name === name && x.id !== a.fid);
-        if (dup) return fail(dup.class_id === a.cid ? "food_exists" : "food_exists_other_class");
+        const cids = [...new Set(a.cids || [])].sort((x, y) => x - y);
+        if (!cids.length) return fail("invalid_classes");
+        if (cids.some((c) => !classes.some((k) => k.id === c))) return fail("unknown_class");
+        if (foods.some((x) => x.name === name && x.id !== a.fid)) return fail("food_exists");
         const used = [...meals.values()].some((ids) => ids.includes(a.fid));
-        if (a.cid !== f.class_id && used) return fail("food_in_use_class");
+        // On peut ajouter des classes à un aliment utilisé, pas en retirer.
+        if (used && f.class_ids.some((c) => !cids.includes(c))) return fail("food_in_use_class");
         f.name = name;
-        f.class_id = a.cid;
+        f.class_ids = cids;
         return ok(null);
       }
 

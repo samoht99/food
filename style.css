@@ -113,6 +113,13 @@ h2.section-title { font-family: var(--serif); font-weight: 500; font-size: 1.25r
   flex: 1; min-width: 0; padding: 10px 14px; border-radius: 999px;
   border: 1px solid var(--line); background: #fff;
 }
+.add-form { margin-bottom: 8px; }
+.add-form .add-row { margin-bottom: 6px; }
+.class-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 2px 6px; }
+.class-check { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; cursor: pointer; }
+.class-check input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.form-grid .form-label { align-self: start; padding-top: 8px; }
+.food-row .fname small.fmeta { display: block; color: var(--ink-soft); font-size: .78rem; margin-top: 2px; }
 .search { width: 100%; margin-bottom: 8px; }
 .food-list { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; }
 .food-row { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
