@@ -26,6 +26,9 @@
   const byName = (n) => foods.find((f) => f.name === n).id;
 
   const meals = new Map(); // "date|slot" -> [food ids]
+  let nextConId = 1;
+  let constraints = ["Télétravail", "Repas au bureau", "Invités", "Sans viande"].map((name) => ({ id: nextConId++, name }));
+  const dayCons = new Map(); // "date" -> [ids de contraintes]
   const users = { reader: ["r", "read"], writer: ["w", "write"], admin: ["a", "admin"] };
 
   const zurichToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date());
@@ -42,6 +45,9 @@
   put(1, "midi", ["boeuf haché", "pâtes", "épinards", "fromage blanc", "banane"]);
   put(2, "soir", ["jambon", "polenta", "haricots verts"]);
   put(1, "soir", ["sandwich jambon-salade", "pomme"]);
+  dayCons.set(addDays(t, 0), [1]);
+  dayCons.set(addDays(t, 1), [3, 4]);
+  dayCons.set(addDays(t, -20), [2]); // hors des 15 jours affichés
   put(-20, "midi", ["poisson", "riz", "courgette", "yaourt"]); // hors des 15 jours affichés, encore en base
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
@@ -78,6 +84,58 @@
           }
         }
         return ok(rows);
+      }
+
+      case "get_constraints":
+        return ok([...constraints]
+          .sort((x, y) => x.name.localeCompare(y.name, "fr"))
+          .map((k) => ({ id: k.id, name: k.name, uses: [...dayCons.values()].filter((ids) => ids.includes(k.id)).length })));
+
+      case "get_day_constraints": {
+        const rows = [];
+        for (const [d, ids] of [...dayCons].sort()) {
+          if (d < a.d_from || d > a.d_to) continue;
+          for (const id of [...ids].sort((x, y) => x - y)) rows.push({ day_date: d, constraint_id: id });
+        }
+        return ok(rows);
+      }
+
+      case "set_day_constraints": {
+        if (role !== "write") return fail("forbidden");
+        if (!inWindow(a.d)) return fail("out_of_window");
+        const ids = [...new Set(a.cids || [])];
+        if (ids.some((id) => !constraints.some((k) => k.id === id))) return fail("unknown_constraint");
+        if (ids.length) dayCons.set(a.d, ids);
+        else dayCons.delete(a.d);
+        return voidOk();
+      }
+
+      case "add_constraint": {
+        if (role !== "admin") return fail("forbidden");
+        const name = String(a.n || "").trim();
+        if (!name || name.length > 60) return fail("invalid_name");
+        if (constraints.some((k) => k.name.toLowerCase() === name.toLowerCase())) return fail("constraint_exists");
+        constraints.push({ id: nextConId++, name });
+        return ok(nextConId - 1);
+      }
+
+      case "update_constraint": {
+        if (role !== "admin") return fail("forbidden");
+        const name = String(a.n || "").trim();
+        const k = constraints.find((x) => x.id === a.cid);
+        if (!name || name.length > 60) return fail("invalid_name");
+        if (!k) return fail("unknown_constraint");
+        if (constraints.some((x) => x.id !== a.cid && x.name.toLowerCase() === name.toLowerCase())) return fail("constraint_exists");
+        k.name = name;
+        return voidOk();
+      }
+
+      case "delete_constraint": {
+        if (role !== "admin") return fail("forbidden");
+        const n = [...dayCons.values()].filter((ids) => ids.includes(a.cid)).length;
+        if (n) return fail("constraint_in_use", String(n));
+        constraints = constraints.filter((k) => k.id !== a.cid);
+        return voidOk();
       }
 
       case "set_meal": {

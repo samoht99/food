@@ -61,6 +61,10 @@ let classes = [];
 let foods = [];
 // foods : [{ id, name, class_ids }] ; un aliment peut avoir plusieurs classes (ex. un sandwich).
 let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_ids }]
+// Contraintes de jour : texte informatif affiché sur un jour, sans effet sur le comportement du site.
+let constraints = []; // [{ id, name, uses }] : liste des contraintes possibles (gérée par l'admin)
+let dayConstraints = new Map(); // "2026-10-27" -> [ids de contraintes]
+let adminSection = "foods"; // onglet Admin : "foods" | "constraints"
 let currentTab = "home";
 let today = "";
 let adminClassId = null;
@@ -101,6 +105,10 @@ function errorText(e) {
     case "invalid_classes": return "Choisissez au moins une classe.";
     case "unknown_class": return "Une classe sélectionnée n'existe plus. Rechargez la page.";
     case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
+    case "constraint_exists": return "Cette contrainte existe déjà.";
+    case "constraint_in_use":
+      return `Cette contrainte est attribuée à ${e.details || "plusieurs"} jour(s). Retirez-la de ces jours avant de la supprimer.`;
+    case "unknown_constraint": return "Une contrainte sélectionnée n'existe plus. Rechargez la page.";
     case "out_of_window": return "Ce jour n'est pas modifiable.";
     case "unknown_food": return "Un aliment sélectionné n'existe plus. Rechargez la page.";
     case "forbidden": return "Action non autorisée avec ce mot de passe.";
@@ -141,13 +149,29 @@ async function loadCatalog() {
   if (!classes.some((c) => c.id === adminClassId)) adminClassId = classes[0] ? classes[0].id : null;
 }
 
+// Les contraintes de jour sont accessoires : si leur chargement échoue (sauf mot de passe refusé),
+// on affiche quand même les repas, sans contraintes.
+const optional = (promise) => promise.catch((e) => {
+  if (e.invalidPassword) throw e;
+  return [];
+});
+
+async function loadConstraints() {
+  constraints = await optional(rpc("get_constraints", auth()));
+}
+
 async function loadMeals() {
   today = zurichToday();
-  const rows = await rpc("get_meals", {
-    ...auth(),
-    d_from: addDays(today, -DAYS_BEFORE),
-    d_to: addDays(today, DAYS_AFTER),
-  });
+  const range = { d_from: addDays(today, -DAYS_BEFORE), d_to: addDays(today, DAYS_AFTER) };
+  const [rows, dayRows] = await Promise.all([
+    rpc("get_meals", { ...auth(), ...range }),
+    optional(rpc("get_day_constraints", { ...auth(), ...range })),
+  ]);
+  dayConstraints = new Map();
+  for (const r of dayRows) {
+    if (!dayConstraints.has(r.day_date)) dayConstraints.set(r.day_date, []);
+    dayConstraints.get(r.day_date).push(r.constraint_id);
+  }
   meals = new Map();
   for (const r of rows) {
     const key = `${r.meal_date}|${r.slot}`;
@@ -158,7 +182,7 @@ async function loadMeals() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadCatalog(), loadMeals()]);
+    await Promise.all([loadCatalog(), loadConstraints(), loadMeals()]);
     statusEl.textContent = "";
     render();
   } catch (e) {
@@ -237,10 +261,32 @@ function mealBlock(date, slot, editable) {
 function dayCard(date, editable) {
   const card = el("article", "day" + (date === today ? " today" : ""));
   card.dataset.date = date;
+  const head = el("div", "day-head");
   const title = el("h3", "day-title", fmtDay(date));
   if (date === today) title.append(el("small", "", "aujourd'hui"));
   else if (date === addDays(today, 1)) title.append(el("small", "", "demain"));
-  card.append(title);
+  head.append(title);
+  // Contraintes du jour, en haut à droite. Seul le mode write peut les modifier (clic dessus).
+  const names = (dayConstraints.get(date) || [])
+    .map((id) => constraints.find((k) => k.id === id))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+    .map((k) => k.name);
+  const chips = () => names.map((n) => el("span", "day-chip", n));
+  if (editable) {
+    const b = el("button", "day-constraints editable");
+    b.type = "button";
+    b.setAttribute("aria-label", `Contraintes du ${fmtDay(date)}`);
+    if (names.length) b.append(...chips());
+    else b.append(el("span", "day-chip empty", "+ Contrainte"));
+    b.addEventListener("click", () => openDayConstraints(date));
+    head.append(b);
+  } else if (names.length) {
+    const box = el("div", "day-constraints");
+    box.append(...chips());
+    head.append(box);
+  }
+  card.append(head);
   for (const slot of SLOTS) card.append(mealBlock(date, slot, editable));
   return card;
 }
@@ -525,27 +571,94 @@ async function clearMeal(date, slot) {
   if (ok) await saveMeal(date, slot, [], statusEl, null);
 }
 
+// ------------------------------------------------- Contraintes d'un jour (mode write)
+const dayDialog = $("day-dialog");
+const dayChecks = $("day-checks");
+const dayError = $("day-error");
+const daySave = $("day-save");
+let dayTarget = null; // { date, before, box }
+
+function openDayConstraints(date) {
+  const before = dayConstraints.get(date) || [];
+  $("day-title").textContent = fmtDay(date);
+  dayError.textContent = "";
+  daySave.disabled = false;
+  let box = null;
+  if (constraints.length) {
+    box = checkBoxes(constraints, new Set(before));
+    dayChecks.replaceChildren(box);
+  } else {
+    dayChecks.replaceChildren(el("p", "empty", "Aucune contrainte n'est définie. Un admin peut en créer dans l'onglet Admin."));
+  }
+  dayTarget = { date, before, box };
+  dayDialog.showModal();
+}
+
+$("day-cancel").addEventListener("click", () => dayDialog.close());
+closeOnBackdrop(dayDialog);
+
+daySave.addEventListener("click", async () => {
+  const { date, before, box } = dayTarget;
+  if (!box) { dayDialog.close(); return; }
+  const ids = box.values();
+  if (ids.length === before.length && ids.every((id) => before.includes(id))) { dayDialog.close(); return; }
+  // Retirer toutes les contraintes d'un jour est une suppression : avec confirmation.
+  if (!ids.length) {
+    const ok = await confirmAction("Êtes-vous sûr de vouloir retirer toutes les contraintes de ce jour ?", fmtDay(date));
+    if (!ok) return;
+  }
+  daySave.disabled = true;
+  try {
+    await rpc("set_day_constraints", { ...auth(), d: date, cids: ids });
+    dayDialog.close();
+    statusEl.textContent = "";
+    await reloadMeals();
+  } catch (e) {
+    fail(e, dayError);
+  }
+  daySave.disabled = false;
+});
+
 // ------------------------------------------------------------------- Admin
-// Cases à cocher des classes d'un aliment ; box.values() renvoie les identifiants cochés.
-function classChecks(selected) {
+// Cases à cocher : items = [{ id, name }] ; box.values() renvoie les identifiants cochés.
+function checkBoxes(items, selected) {
   const box = el("div", "class-checks");
-  for (const c of classes) {
+  for (const it of items) {
     const label = el("label", "class-check");
     const cb = el("input");
     cb.type = "checkbox";
-    cb.value = c.id;
-    cb.checked = selected.has(c.id);
-    label.append(cb, document.createTextNode(c.name));
+    cb.value = it.id;
+    cb.checked = selected.has(it.id);
+    label.append(cb, document.createTextNode(it.name));
     box.append(label);
   }
   box.values = () => [...box.querySelectorAll("input:checked")].map((i) => Number(i.value));
   return box;
 }
 
+// Cases à cocher des classes d'un aliment.
+function classChecks(selected) {
+  return checkBoxes(classes, selected);
+}
+
 function renderAdmin() {
   const root = $("tab-admin");
   if (role !== "admin") { root.replaceChildren(); return; }
-  root.replaceChildren(el("h2", "section-title", "Aliments"));
+  root.replaceChildren();
+  const seg = el("div", "segment");
+  for (const [key, label] of [["foods", "Aliments"], ["constraints", "Contraintes"]]) {
+    seg.append(button("seg" + (adminSection === key ? " on" : ""), label, () => {
+      adminSection = key;
+      adminSearch = "";
+      renderAdmin();
+    }));
+  }
+  root.append(seg);
+  if (adminSection === "constraints") renderConstraintsAdmin(root);
+  else renderFoodsAdmin(root);
+}
+
+function renderFoodsAdmin(root) {
 
   const chips = el("div", "chips");
   for (const c of classes) {
@@ -638,6 +751,119 @@ async function deleteFood(f) {
     fail(e);
   }
 }
+
+// ---------------------------------------------------- Admin : gestion des contraintes
+function renderConstraintsAdmin(root) {
+  const addForm = el("form", "add-form");
+  const addRow = el("div", "add-row");
+  const addInput = el("input");
+  addInput.type = "text";
+  addInput.maxLength = 60;
+  addInput.placeholder = "Nouvelle contrainte";
+  addInput.autocomplete = "off";
+  const addBtn = el("button", "btn-primary", "Ajouter");
+  addBtn.type = "submit";
+  addRow.append(addInput, addBtn);
+  addForm.append(addRow);
+  addForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = addInput.value.trim();
+    if (!name) return;
+    addBtn.disabled = true;
+    try {
+      await rpc("add_constraint", { ...auth(), n: name });
+      statusEl.textContent = "";
+      await loadConstraints();
+      render();
+      $("tab-admin").querySelector(".add-row input").focus();
+      return;
+    } catch (err) {
+      fail(err);
+    }
+    addBtn.disabled = false;
+  });
+  root.append(addForm);
+
+  const search = el("input", "search");
+  search.type = "search";
+  search.placeholder = "Rechercher";
+  search.value = adminSearch;
+  root.append(search);
+
+  const list = el("ul", "food-list");
+  root.append(list);
+  const fill = () => {
+    const q = adminSearch.trim().toLowerCase();
+    const rows = constraints.filter((k) => k.name.toLowerCase().includes(q));
+    list.replaceChildren();
+    if (!rows.length) {
+      list.append(el("li", "empty", q ? "Aucun résultat" : "Aucune contrainte pour le moment"));
+      return;
+    }
+    for (const k of rows) {
+      const li = el("li", "food-row");
+      const name = el("span", "fname", k.name);
+      const uses = Number(k.uses) || 0;
+      name.append(el("small", "fmeta", uses ? `attribuée à ${uses} jour${uses > 1 ? "s" : ""}` : "non attribuée"));
+      li.append(name);
+      li.append(button("btn-sm", "Modifier", () => openConstraintEdit(k)));
+      li.append(button("btn-sm danger", "Supprimer", () => deleteConstraint(k)));
+      list.append(li);
+    }
+  };
+  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
+  fill();
+}
+
+async function deleteConstraint(k) {
+  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cette contrainte ?", k.name);
+  if (!ok) return;
+  try {
+    await rpc("delete_constraint", { ...auth(), cid: k.id });
+    statusEl.textContent = "";
+    await loadConstraints();
+    render();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const constraintDialog = $("constraint-dialog");
+const constraintError = $("constraint-error");
+const constraintName = $("constraint-name");
+let editingConstraint = null;
+
+function openConstraintEdit(k) {
+  editingConstraint = k;
+  constraintName.value = k.name;
+  constraintError.textContent = "";
+  constraintDialog.showModal();
+  constraintName.focus();
+  constraintName.select();
+}
+
+$("constraint-cancel").addEventListener("click", () => constraintDialog.close());
+closeOnBackdrop(constraintDialog);
+constraintName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("constraint-save").click(); }
+});
+$("constraint-save").addEventListener("click", async () => {
+  const name = constraintName.value.trim();
+  if (!name) { constraintError.textContent = errorText({ code: "invalid_name" }); return; }
+  if (name === editingConstraint.name) { constraintDialog.close(); return; }
+  const btn = $("constraint-save");
+  btn.disabled = true;
+  try {
+    await rpc("update_constraint", { ...auth(), cid: editingConstraint.id, n: name });
+    constraintDialog.close();
+    statusEl.textContent = "";
+    await loadConstraints();
+    render();
+  } catch (e) {
+    fail(e, constraintError);
+  }
+  btn.disabled = false;
+});
 
 const foodDialog = $("food-dialog");
 const foodEditError = $("food-edit-error");

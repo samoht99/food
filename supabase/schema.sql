@@ -63,18 +63,41 @@ create table if not exists food.meal_items (
 );
 create index if not exists meal_items_food_idx on food.meal_items (food_id);
 
+-- Contraintes de jour : la liste de toutes les contraintes possibles (ex. « Télétravail »,
+-- « Invités »), gérée par l'admin. Pour l'instant une contrainte n'a qu'un nom ; elle est
+-- uniquement informative (affichée sur le jour, sans effet sur le comportement du site).
+-- Le nom est unique sans tenir compte de la casse ; il garde la casse saisie.
+create table if not exists food.constraints (
+  id   bigint generated always as identity primary key,
+  name text not null check (name = btrim(name) and name <> '' and char_length(name) <= 60)
+);
+create unique index if not exists constraints_name_key on food.constraints (lower(name));
+
+-- Contraintes attribuées à un jour : un jour peut en avoir plusieurs, et une contrainte peut être
+-- attribuée à plusieurs jours. Un jour sans contrainte n'a pas de ligne.
+create table if not exists food.day_constraints (
+  day_date      date   not null,
+  constraint_id bigint not null references food.constraints (id) on delete restrict,
+  primary key (day_date, constraint_id)
+);
+create index if not exists day_constraints_constraint_idx on food.day_constraints (constraint_id);
+
 -- Journal d'audit : une ligne par action de modification réussie (rôles write et admin).
 -- Les consultations, les connexions, les actions refusées, la purge automatique et ce qui est
 -- fait directement en SQL n'y figurent pas. Conservé 12 mois (voir _purge_old_data).
--- target : "2026-10-28 soir" pour un repas, nom de l'aliment pour un aliment.
--- before / after : liste des noms d'aliments (repas) ou { name, classes: [noms] } (aliment).
+-- target : "2026-10-28 soir" pour un repas, nom de l'aliment ou de la contrainte, "2026-10-28"
+-- pour les contraintes d'un jour.
+-- before / after : liste des noms d'aliments (repas), { name, classes: [noms] } (aliment),
+-- nom (contrainte) ou liste des noms de contraintes (contraintes d'un jour).
 create table if not exists food.audit_log (
   id      bigint generated always as identity primary key,
   logged_at timestamptz not null default now(),
   user_id text not null,
   role    text not null,
   action  text not null check (action in
-            ('meal_create', 'meal_update', 'meal_clear', 'food_add', 'food_update', 'food_delete')),
+            ('meal_create', 'meal_update', 'meal_clear', 'food_add', 'food_update', 'food_delete',
+             'day_constraint_create', 'day_constraint_update', 'day_constraint_clear',
+             'constraint_add', 'constraint_update', 'constraint_delete')),
   target  text not null,
   before  jsonb,
   after   jsonb
@@ -98,9 +121,11 @@ alter table food.foods        enable row level security;
 alter table food.food_classes enable row level security;
 alter table food.meals        enable row level security;
 alter table food.meal_items   enable row level security;
+alter table food.constraints     enable row level security;
+alter table food.day_constraints enable row level security;
 alter table food.audit_log    enable row level security;
 revoke all on food.users, food.classes, food.foods, food.food_classes, food.meals,
-  food.meal_items, food.audit_log from anon, authenticated;
+  food.meal_items, food.constraints, food.day_constraints, food.audit_log from anon, authenticated;
 
 -- ------------------------------------------------------ Fonctions internes
 -- Rôle de l'utilisateur ('read', 'write', 'admin'), ou null si l'identifiant ou le mot de
@@ -154,8 +179,8 @@ as $$
   select (now() at time zone 'Europe/Zurich')::date;
 $$;
 
--- Supprime les repas de plus de 30 jours (l'interface n'en affiche que 15)
--- et les lignes d'audit de plus de 12 mois.
+-- Supprime les repas et les contraintes de jour de plus de 30 jours (l'interface n'en affiche
+-- que 15) et les lignes d'audit de plus de 12 mois.
 create or replace function food._purge_old_data()
 returns void
 language plpgsql
@@ -164,6 +189,7 @@ set search_path = food
 as $$
 begin
   delete from food.meals where meal_date < food._today() - 30;
+  delete from food.day_constraints where day_date < food._today() - 30;
   delete from food.audit_log where logged_at < now() - interval '12 months';
 end;
 $$;
@@ -333,6 +359,173 @@ as $$
   where c.id = any (ids);
 $$;
 
+-- Contraintes possibles (tous rôles), avec le nombre de jours où chacune est attribuée.
+create or replace function food.get_constraints(u text, p text)
+returns table (id bigint, name text, uses bigint)
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+begin
+  perform food._check(u, p, array['read', 'write', 'admin']);
+  return query
+    select k.id, k.name,
+           (select count(*) from food.day_constraints dc where dc.constraint_id = k.id)
+    from food.constraints k
+    order by lower(k.name), k.id;
+end;
+$$;
+
+-- Contraintes attribuées aux jours entre deux dates incluses (tous rôles). Une ligne par contrainte.
+create or replace function food.get_day_constraints(u text, p text, d_from date, d_to date)
+returns table (day_date date, constraint_id bigint)
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+begin
+  perform food._check(u, p, array['read', 'write', 'admin']);
+  return query
+    select dc.day_date, dc.constraint_id
+    from food.day_constraints dc
+    where dc.day_date between d_from and d_to
+    order by dc.day_date, dc.constraint_id;
+end;
+$$;
+
+-- Remplace entièrement les contraintes d'un jour (rôle write uniquement). Liste vide = aucune.
+-- Mêmes jours modifiables que les repas : 15 derniers jours à +30 jours.
+create or replace function food.set_day_constraints(u text, p text, d date, cids bigint[])
+returns void
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+declare
+  r text;
+  ids bigint[];
+  before_names jsonb;
+  after_names jsonb;
+begin
+  r := food._check(u, p, array['write']);
+  if d < food._today() - 15 or d > food._today() + 30 then
+    raise exception 'out_of_window';
+  end if;
+
+  select coalesce(array_agg(distinct x), '{}') into ids
+  from unnest(coalesce(cids, '{}')) x
+  where x is not null;
+  if (select count(*) from food.constraints where id = any (ids)) <> cardinality(ids) then
+    raise exception 'unknown_constraint';
+  end if;
+
+  select coalesce(jsonb_agg(k.name order by lower(k.name), k.id), '[]'::jsonb) into before_names
+  from food.day_constraints dc
+  join food.constraints k on k.id = dc.constraint_id
+  where dc.day_date = d;
+  select coalesce(jsonb_agg(k.name order by lower(k.name), k.id), '[]'::jsonb) into after_names
+  from food.constraints k
+  where k.id = any (ids);
+
+  -- Rien n'est écrit (ni consigné) si les contraintes du jour ne changent pas.
+  if before_names <> after_names then
+    delete from food.day_constraints where day_date = d;
+    insert into food.day_constraints (day_date, constraint_id) select d, unnest(ids);
+    perform food._audit(
+      u, r,
+      case when before_names = '[]'::jsonb then 'day_constraint_create'
+           when cardinality(ids) = 0 then 'day_constraint_clear'
+           else 'day_constraint_update' end,
+      d::text, before_names, after_names);
+  end if;
+
+  perform food._purge_old_data();
+end;
+$$;
+
+-- Crée une contrainte (rôle admin uniquement). Le nom est unique, sans tenir compte de la casse.
+create or replace function food.add_constraint(u text, p text, n text)
+returns bigint
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+declare
+  r text;
+  name_ text := btrim(coalesce(n, ''));
+  new_id bigint;
+begin
+  r := food._check(u, p, array['admin']);
+  if name_ = '' or char_length(name_) > 60 then
+    raise exception 'invalid_name';
+  end if;
+  if exists (select 1 from food.constraints k where lower(k.name) = lower(name_)) then
+    raise exception 'constraint_exists';
+  end if;
+  insert into food.constraints (name) values (name_) returning id into new_id;
+  perform food._audit(u, r, 'constraint_add', name_, null, to_jsonb(name_));
+  return new_id;
+end;
+$$;
+
+-- Renomme une contrainte (rôle admin uniquement). Les jours qui l'utilisent suivent
+-- automatiquement (ils pointent vers l'identifiant).
+create or replace function food.update_constraint(u text, p text, cid bigint, n text)
+returns void
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+declare
+  r text;
+  name_ text := btrim(coalesce(n, ''));
+  old_name text;
+begin
+  r := food._check(u, p, array['admin']);
+  if name_ = '' or char_length(name_) > 60 then
+    raise exception 'invalid_name';
+  end if;
+  select k.name into old_name from food.constraints k where k.id = cid;
+  if not found then
+    raise exception 'unknown_constraint';
+  end if;
+  if exists (select 1 from food.constraints k where lower(k.name) = lower(name_) and k.id <> cid) then
+    raise exception 'constraint_exists';
+  end if;
+
+  -- Rien n'est écrit (ni consigné) si le nom ne change pas.
+  if name_ <> old_name then
+    update food.constraints set name = name_ where id = cid;
+    perform food._audit(u, r, 'constraint_update', old_name, to_jsonb(old_name), to_jsonb(name_));
+  end if;
+end;
+$$;
+
+-- Supprime une contrainte (rôle admin uniquement), bloqué si elle est attribuée à au moins un jour.
+create or replace function food.delete_constraint(u text, p text, cid bigint)
+returns void
+language plpgsql
+security definer
+set search_path = food, extensions
+as $$
+declare
+  r text;
+  n integer;
+  old_name text;
+begin
+  r := food._check(u, p, array['admin']);
+  select count(*) into n from food.day_constraints dc where dc.constraint_id = cid;
+  if n > 0 then
+    raise exception 'constraint_in_use' using detail = n::text;
+  end if;
+  select k.name into old_name from food.constraints k where k.id = cid;
+  if found then
+    delete from food.constraints where id = cid;
+    perform food._audit(u, r, 'constraint_delete', old_name, to_jsonb(old_name), null);
+  end if;
+end;
+$$;
+
 -- Ajoute un aliment avec une ou plusieurs classes (rôle admin uniquement).
 create or replace function food.add_food(u text, p text, n text, cids smallint[])
 returns bigint
@@ -451,6 +644,12 @@ revoke execute on function food.login(text, text)                               
 revoke execute on function food.get_catalog(text, text)                                from public;
 revoke execute on function food.get_meals(text, text, date, date)                      from public;
 revoke execute on function food.set_meal(text, text, date, text, bigint[])             from public;
+revoke execute on function food.get_constraints(text, text)                            from public;
+revoke execute on function food.get_day_constraints(text, text, date, date)            from public;
+revoke execute on function food.set_day_constraints(text, text, date, bigint[])        from public;
+revoke execute on function food.add_constraint(text, text, text)                       from public;
+revoke execute on function food.update_constraint(text, text, bigint, text)            from public;
+revoke execute on function food.delete_constraint(text, text, bigint)                  from public;
 revoke execute on function food.add_food(text, text, text, smallint[])                   from public;
 revoke execute on function food.update_food(text, text, bigint, text, smallint[])        from public;
 revoke execute on function food.delete_food(text, text, bigint)                        from public;
@@ -459,6 +658,12 @@ grant execute on function food.login(text, text)                                
 grant execute on function food.get_catalog(text, text)                                 to anon, authenticated;
 grant execute on function food.get_meals(text, text, date, date)                       to anon, authenticated;
 grant execute on function food.set_meal(text, text, date, text, bigint[])              to anon, authenticated;
+grant execute on function food.get_constraints(text, text)                             to anon, authenticated;
+grant execute on function food.get_day_constraints(text, text, date, date)             to anon, authenticated;
+grant execute on function food.set_day_constraints(text, text, date, bigint[])         to anon, authenticated;
+grant execute on function food.add_constraint(text, text, text)                        to anon, authenticated;
+grant execute on function food.update_constraint(text, text, bigint, text)             to anon, authenticated;
+grant execute on function food.delete_constraint(text, text, bigint)                   to anon, authenticated;
 grant execute on function food.add_food(text, text, text, smallint[])                    to anon, authenticated;
 grant execute on function food.update_food(text, text, bigint, text, smallint[])         to anon, authenticated;
 grant execute on function food.delete_food(text, text, bigint)                         to anon, authenticated;

@@ -88,13 +88,14 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
   order by c.position;
   ```
 - Le site affiche les 15 derniers jours et les 30 prochains. Les repas passés sont gardés 30 jours en base puis supprimés automatiquement, mais seulement quand quelqu'un enregistre ou vide un repas (quel que soit le jour modifié). Il en va de même pour la purge du journal d'audit (12 mois).
+- Un jour peut avoir une ou plusieurs **contraintes** (par exemple « Télétravail », « Invités ») : un texte purement informatif, affiché en haut à droite du jour, sans effet sur le comportement du site. La liste des contraintes possibles (table `food.constraints`, un nom unique sans tenir compte de la casse) est gérée par l'admin, dans l'onglet Admin, partie « Contraintes » (créer, renommer, supprimer ; une contrainte attribuée à au moins un jour ne peut pas être supprimée). Le rôle write choisit les contraintes d'un jour parmi cette liste (table `food.day_constraints`), sur les mêmes jours que les repas ; retirer toutes les contraintes d'un jour demande une confirmation. Les attributions de plus de 30 jours sont supprimées avec les vieux repas.
 - « Aujourd'hui » est calculé en heure de Zurich.
 
 ## Journal d'audit
 
-Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear` (rôle write), `food_add`, `food_update`, `food_delete` (rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments).
+Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear`, `day_constraint_create`, `day_constraint_update`, `day_constraint_clear` (rôle write), `food_add`, `food_update`, `food_delete`, `constraint_add`, `constraint_update`, `constraint_delete` (rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments ou de contraintes).
 
-Ne sont **pas** consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien, la suppression automatique des vieux repas et tout ce qui est fait directement en SQL. Les lignes de plus de 12 mois sont supprimées automatiquement (en même temps que les vieux repas, à chaque enregistrement de repas).
+Ne sont **pas** consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien, la suppression automatique des vieux repas et contraintes de jour et tout ce qui est fait directement en SQL. Les lignes de plus de 12 mois sont supprimées automatiquement (en même temps que les vieux repas, à chaque enregistrement de repas).
 
 Consulter le journal (SQL Editor) :
 

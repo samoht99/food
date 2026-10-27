@@ -74,7 +74,25 @@ h2.section-title { font-family: var(--serif); font-weight: 500; font-size: 1.25r
   padding: 12px 14px; margin-bottom: 12px;
 }
 .day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.day-title { font-weight: 600; margin: 0 0 8px; }
+.day-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 0 0 8px; }
+.day-title { font-weight: 600; margin: 0; padding-top: 3px; }
+.day-constraints {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 60%; margin-left: auto;
+}
+button.day-constraints { background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; }
+.day-chip {
+  font-size: .78rem; line-height: 1.3; padding: 3px 10px; border-radius: 12px; overflow-wrap: anywhere;
+  background: var(--accent-soft); color: var(--accent-dark);
+}
+button.day-constraints:hover .day-chip { background: #f0d3c4; }
+.day-chip.empty { background: transparent; border: 1px dashed var(--line); color: var(--ink-soft); }
+button.day-constraints:hover .day-chip.empty { border-color: var(--accent); color: var(--accent-dark); }
+.segment { display: flex; gap: 6px; margin: 6px 0 12px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; }
+.seg { flex: 1; padding: 8px 0; border: 0; border-radius: 999px; background: transparent; color: var(--ink-soft); cursor: pointer; }
+.seg.on { background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
+.tag-input {
+  width: 100%; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff;
+}
 .day.today .day-title { color: var(--accent-dark); }
 .day-title small { font-weight: 400; color: var(--accent-dark); margin-left: 6px; }
 

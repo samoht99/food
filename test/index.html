@@ -57,6 +57,27 @@
     </div>
   </dialog>
 
+  <dialog id="day-dialog" class="dialog" aria-labelledby="day-title">
+    <h2 id="day-title" class="dialog-title"></h2>
+    <p class="dialog-hint">Contraintes à respecter ce jour-là (information seulement). Plusieurs choix possibles.</p>
+    <div id="day-checks"></div>
+    <p id="day-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="day-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="day-save" class="btn-yes">Enregistrer</button>
+    </div>
+  </dialog>
+
+  <dialog id="constraint-dialog" class="dialog" aria-labelledby="constraint-title">
+    <h2 id="constraint-title" class="dialog-title">Modifier la contrainte</h2>
+    <input id="constraint-name" class="tag-input" type="text" maxlength="60" autocomplete="off" placeholder="Nom de la contrainte">
+    <p id="constraint-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="constraint-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="constraint-save" class="btn-yes">Enregistrer</button>
+    </div>
+  </dialog>
+
   <dialog id="food-dialog" class="dialog" aria-labelledby="food-dialog-title">
     <h2 id="food-dialog-title" class="dialog-title">Modifier l'aliment</h2>
     <div class="form-grid">
