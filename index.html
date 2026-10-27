@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Repas - Famille DD</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" hidden>
+    <header class="topbar">
+      <h1>Repas</h1>
+      <span id="role-badge" class="role-badge"></span>
+      <button type="button" id="quit" class="link-btn">Quitter</button>
+    </header>
+
+    <p id="status" class="status" role="alert" title="Cliquer pour masquer" hidden></p>
+
+    <main>
+      <section id="tab-home" class="tab"></section>
+      <section id="tab-meals" class="tab" hidden></section>
+      <section id="tab-admin" class="tab" hidden></section>
+    </main>
+
+    <button type="button" id="today-btn" class="today-btn" hidden>Aujourd'hui</button>
+
+    <nav id="tabs" class="tabs" aria-label="Navigation">
+      <button type="button" data-tab="home" class="on">Accueil</button>
+      <button type="button" data-tab="meals">Repas</button>
+      <button type="button" data-tab="admin" id="tab-admin-btn" hidden>Admin</button>
+    </nav>
+  </div>
+
+  <div id="gate" class="gate">
+    <form id="gate-form" class="gate-box">
+      <h2>Repas de la famille</h2>
+      <input id="password" type="password" placeholder="Mot de passe" autocomplete="current-password" required autofocus>
+      <button type="submit">Entrer</button>
+      <p id="gate-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <dialog id="meal-dialog" class="dialog meal-dialog" aria-labelledby="meal-title">
+    <h2 id="meal-title" class="dialog-title"></h2>
+    <p class="dialog-hint">Laissez vides les parties que vous ne voulez pas remplir.</p>
+    <div id="meal-rows" class="meal-rows"></div>
+    <p id="meal-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="meal-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="meal-save" class="btn-yes">Enregistrer</button>
+    </div>
+  </dialog>
+
+  <dialog id="food-dialog" class="dialog" aria-labelledby="food-dialog-title">
+    <h2 id="food-dialog-title" class="dialog-title">Modifier l'aliment</h2>
+    <div class="form-grid">
+      <label for="food-edit-name">Nom</label>
+      <input id="food-edit-name" type="text" maxlength="60" autocomplete="off">
+      <label for="food-edit-class">Classe</label>
+      <select id="food-edit-class"></select>
+    </div>
+    <p id="food-edit-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="food-edit-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="food-edit-save" class="btn-yes">Enregistrer</button>
+    </div>
+  </dialog>
+
+  <dialog id="confirm" class="dialog confirm" aria-labelledby="confirm-title">
+    <p id="confirm-title" class="confirm-title"></p>
+    <p id="confirm-detail" class="confirm-detail"></p>
+    <div class="dialog-actions">
+      <button type="button" id="confirm-no" class="btn-no">Non</button>
+      <button type="button" id="confirm-yes" class="btn-yes">Oui</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

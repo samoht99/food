@@ -1,0 +1,108 @@
+SPECIFICATIONS (v1-1)
+
+***** Contexte général
+
+Un site web qui me permet de définir ma liste de repas pour les jours à venir et la liste des courses correspondante.
+Pour la v1 concentrons-nous uniquement sur la partie repas.
+
+Aujourd'hui je planifie mes repas pour les 2 prochaines semaines et les écris dans un fichier bloc note, ce qui est pénible.
+J'aimerais maintenant que ce soit sur un site web facilement accessible depuis mon pc ou mon smartphone.
+
+***** Expérience utilisateur
+
+1- Ouverture du site
+1-1- quand j'ouvre le site web on me demande un mot de passe. Selon le mot de passe entré je suis dans un mode différent et je vois différents onglets
+1-2- une fois le site ouvert, je vois une page d'accueil (à voir ce qu'on peut mettre dedans).
+
+2- Onglet Repas
+quand je clique sur l'onglet Repas, je vois la liste des 15 derniers jours et des 30 prochains jours. Cette liste est dynamique, chaque jour elle "glisse".
+2-1- pour chaque jour on voit les repas correspondant
+2-2- pour chaque repas on voit les aliments correspondant à chaque classe
+2-3- si un jour est vide = pas de repas rempli, on l'affiche quand même avec ses 2 repas vides
+2-4- un repas vide est affiché juste avec la notion "vide"
+2-5- un repas rempli est affiché avec ses aliments et à côté la classe de l'aliment
+2-6- je peux modifier un repas = le générer manuellement pour un jour donné en cliquant sur un bouton "Générer repas manuel"
+2-6-1- un popup d'input apparaît avec les parties du repas à remplir
+2-6-2- je peux laisser une partie de repas vide
+2-6-3- pour remplir une partie de repas, je ne peux inscrire n'importe quel aliment : l'aliment doit être dans la liste des aliments existant et doit être de la classe correspondant à la partie de repas en question
+2-6-4- je peux sélectionner plusieurs aliments pour une même partie de repas
+2-7- je peux modifier n'importe quel repas affiché dans l'UI, donc je peux modifier dans le passé les 15 derniers jours et dans le futur les 30 prochains jours.
+
+3- Onglet Admin
+3-1- Il doit permettre les actions suivantes :
+3-1-1- afficher la liste de tous les aliments existant, dis-moi si tu préfères :
+3-1-1-1- soit répartis par classe = une liste par classe d'aliments
+3-1-1-2- soit une seule liste contenant tous les aliments (affichant le nom et la classe), triée par order alaphabétique
+3-1-2- ajouter un nouvel aliment en lui donnant un nom et l'associant à une classe
+3-1-3- supprimer un aliment avec un popup de confirmation
+3-2- Il ne doit pas permettre les actions suivantes :
+3-2-1- supprimer la liste entière --> devra être fait directement via SQL en DB
+3-2-2- supprimer une classe d'aliment --> devra être fait directement via SQL en DB
+3-2-3- créer une classe d'aliment --> devra être fait directement via SQL en DB
+
+4- Modifications
+4-1- chaque action de suppression doit avoir un popup de confirmation pour être sûr de ce qu'on fait
+4-2- chaque action de modification d'un repas déjà rempli doit avoir un popup de confirmation pour être sûr de ce qu'on fait
+4-3- la génération d'un repas vide ne nécessite pas de popup de confirmation
+
+***** UI
+
+Je te laisse me faire des propositions de maquette qui te paraissent cohérentes et en adéquation avec mes spécifications.
+Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout smartphone.
+
+1- Onglet Repas
+1-1- Concernant les boutons de modification/génération de repas, je me disais et tu peux me conseiller différemment :
+1-1-2- le bouton "Générer repas manuel" peut être soit
+1-1-2-1- à côté de chaque repas dans chaque jour --> dans ce cas en cliquant dessus on sait déjà quel repas de quel jour on modifie
+1-1-2-2- à côté de chaque jour --> dans ce cas en cliquant dessus on sait quel jour on modifie mais un popup demande quel repas de ce jour on modifie
+1-1-2-3- de manière globale --> dans ce cas en cliquant dessus un popup demande quel jour et quel repas on modifie
+1-2- Concernant le popup de génération de repas :
+1-2-1- il affiche chaque partie de repas sur une ligne différente
+1-2-2- chaque ligne a la partie de repas à gauche en en-tête et un champ d'input à droite
+1-2-3- quand on clique dans le champ d'input, une liste déroulante apparaît avec tous les aliments existant et assignés à la classe correspondant à la partie de repas en question
+1-2-4- quand on commence à taper, la liste déroulante affiche seulement les aliments qui commencent par les lettres tapées
+1-2-5- quand on sélectionne un aliment, il s'affiche dans le champ d'input, dans un petit cadre avec une croix pour pouvoir l'enlever, et on peut cliquer à côté dans le champ d'input pour ajouter un autre aliment
+
+2- Onglet Admin
+2-1- vu qu'il peut être utilisé sur smartphone, ne vaudrait-il mieux pas faire plusieurs niveaux de sous-onglets : un premier sous-onglet Aliments qui contient des sous-onglets, un pour chaque classe
+sauf si tu as une meilleure idée
+
+***** Modèle de données
+
+1- repas
+1-1- chaque jour comprend 2 repas : le midi et le soir
+1-2- un repas est composé de plusieurs parties : une protéine, un féculent, un légume, un laitage, un fruit
+1-3- chaque partie dans un repas peut contenir 1 ou plusieurs aliments
+1-4- chaque partie de repas correspond à une classe d'aliments
+1-5- chaque partie dans un repas ne peut contenir que les aliments de la classe qui lui correspond
+
+2- classes de repas
+2-1- une classe de repas est une catégorie d'aliments
+2-2- une classe de repas a donc plusieurs aliments qui peuvent lui être associés
+2-3- la correspondance entre classe de repas et partie de repas est la suivante :
+2-3-1- classe Protéines = partie protéine
+2-3-2- classe Féculents = partie féculent
+2-3-3- classe Légumes = partie légume
+2-3-4- classe Laitages = partie laitage
+2-3-5- classe Fruits = partie fruit
+
+2- liste des aliments existant
+2-1- un aliment est défini par son nom et la classe de repas à laquelle il appartient
+2-2- un aliment ne peut pas appartenir à plusieurs classes de repas en même temps. Si j'insère un aliment déjà existant mais avec une autre classe je dois avoir une erreur.
+
+***** Sécurité
+1- le site est protégé par 3 mots de passe que l'on entre en ouvrant le site. Selon le mot de passe entré je suis dans un mode différent:
+1-1- Read = lecture. Grâce à ce mot de passe on a accès au site en lecture, on voir l'onglet "Repas" et son contenu.
+1-2- Write = écriture. Grâce à ce mot de passe on a tous les droits du mot de passe Read + on a accès aux boutons de modification (pour l'instant de modification des repas).
+1-3- Admin = administrateur. Grâce à ce mot de passe on a tous les droits du mot de passe Read + on a accès à l'onglet "Admin" avec tout ce qu'il contient et toutes ses actions.
+2- On ne peut pas passer d'un mode à l'autre une fois connecté. Pour changer de mode il faut quitter le site, le réouvrir pour pouvoir entrer le mot de passe du mode que l'on veut.
+
+***** Détails techniques
+
+1- Github:
+1-1- compte existant avec organisation samoht99
+1-2- nouveau repo dans l'organisation samoht99, ce repo s'appelle "food"
+2- Supabase:
+2-1- compte existant avec organisation samoht99
+2-2- projet existant dans l'organisation samoht99, ce projet s'appelle family
+2-3- dans le projet family créer un nouveau schéma DB appelé "food"

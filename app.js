@@ -1,0 +1,650 @@
+// Ces deux valeurs sont publiques par conception (la sécurité repose sur la base).
+const SUPABASE_URL = "https://bwcizhvhtwkjfjadurcj.supabase.co";
+const SUPABASE_KEY = "sb_publishable_KLQZ-MuQKYbV1_GUvOFk9Q_nfumGtNc";
+
+const SUPABASE_SCHEMA = "food";
+
+// Read et Write : mot de passe gardé dans le navigateur (session persistante).
+// Admin : gardé uniquement le temps de l'onglet (révoqué à sa fermeture).
+const STORAGE_KEY = "food_pw";
+
+const DAYS_BEFORE = 15;
+const DAYS_AFTER = 30;
+const SLOTS = ["midi", "soir"];
+
+const $ = (id) => document.getElementById(id);
+const gate = $("gate");
+const gateForm = $("gate-form");
+const gateError = $("gate-error");
+const passwordInput = $("password");
+const app = $("app");
+const todayBtn = $("today-btn");
+
+// Message d'erreur : bandeau fixe en haut de l'écran (visible quel que soit le défilement),
+// qui disparaît seul ou au clic. Écrire dans statusEl.textContent l'affiche ; "" le masque.
+const toast = $("status");
+let toastTimer = 0;
+const statusEl = {
+  set textContent(msg) {
+    clearTimeout(toastTimer);
+    toast.textContent = msg;
+    toast.hidden = !msg;
+    if (msg) toastTimer = setTimeout(() => { toast.hidden = true; }, 8000);
+  },
+};
+toast.addEventListener("click", () => { statusEl.textContent = ""; });
+
+// Ferme une boîte de dialogue quand on clique en dehors de sa zone visible (sur le fond).
+// On compare avec les coordonnées : un clic sur le bord intérieur de la boîte ne la ferme pas,
+// et il faut que l'appui ET le relâchement soient en dehors (un clic qui commence dans la boîte
+// et finit dehors, par exemple si la boîte change de taille, ne la ferme pas).
+function closeOnBackdrop(dialog, value) {
+  const outside = (e) => {
+    const r = dialog.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  let pressedOutside = false;
+  dialog.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+  dialog.addEventListener("click", (e) => {
+    if (pressedOutside && outside(e)) dialog.close(value);
+    pressedOutside = false;
+  });
+}
+
+let password = "";
+let role = "";
+let classes = [];
+let foods = [];
+let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_id }]
+let currentTab = "home";
+let today = "";
+let adminClassId = null;
+let adminSearch = "";
+
+// ------------------------------------------------------------------ Réseau
+async function rpc(name, args) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_KEY,
+      "Content-Profile": SUPABASE_SCHEMA, // schéma PostgreSQL où vivent les fonctions
+    },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `Erreur ${res.status}`);
+    err.code = body.message;
+    err.details = body.details;
+    err.invalidPassword = body.message === "invalid_password";
+    throw err;
+  }
+  return res.json();
+}
+
+function errorText(e) {
+  switch (e.code) {
+    case "food_exists": return "Cet aliment existe déjà dans cette classe.";
+    case "food_exists_other_class": return "Cet aliment existe déjà dans une autre classe.";
+    case "food_in_use":
+      return `Cet aliment est utilisé dans ${e.details || "plusieurs"} repas. Retirez-le de ces repas avant de le supprimer.`;
+    case "food_in_use_class": return "Cet aliment est utilisé dans des repas : sa classe ne peut pas être modifiée.";
+    case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
+    case "out_of_window": return "Ce jour n'est pas modifiable.";
+    case "unknown_food": return "Un aliment sélectionné n'existe plus. Rechargez la page.";
+    case "forbidden": return "Action non autorisée avec ce mot de passe.";
+    default: return "Une erreur est survenue. Réessayez plus tard.";
+  }
+}
+
+// Affiche l'erreur dans la zone voulue ; renvoie true si la session a expiré.
+function fail(e, target = statusEl) {
+  if (e.invalidPassword) { lock(); return true; }
+  target.textContent = errorText(e);
+  return false;
+}
+
+// ------------------------------------------------------------------- Dates
+function zurichToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date());
+}
+
+function addDays(ds, n) {
+  const [y, m, d] = ds.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+function fmtDay(ds) {
+  const [y, m, d] = ds.split("-").map(Number);
+  const s = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("fr-FR", {
+    weekday: "long", day: "numeric", month: "long", timeZone: "UTC",
+  });
+  return s[0].toUpperCase() + s.slice(1);
+}
+
+// -------------------------------------------------------------------- Données
+async function loadCatalog() {
+  const cat = await rpc("get_catalog", { p: password });
+  classes = cat.classes;
+  foods = cat.foods;
+  if (!classes.some((c) => c.id === adminClassId)) adminClassId = classes[0] ? classes[0].id : null;
+}
+
+async function loadMeals() {
+  today = zurichToday();
+  const rows = await rpc("get_meals", {
+    p: password,
+    d_from: addDays(today, -DAYS_BEFORE),
+    d_to: addDays(today, DAYS_AFTER),
+  });
+  meals = new Map();
+  for (const r of rows) {
+    const key = `${r.meal_date}|${r.slot}`;
+    if (!meals.has(key)) meals.set(key, []);
+    meals.get(key).push({ id: r.food_id, name: r.food_name, class_id: r.class_id });
+  }
+}
+
+async function loadAll() {
+  try {
+    await Promise.all([loadCatalog(), loadMeals()]);
+    statusEl.textContent = "";
+    render();
+  } catch (e) {
+    if (!fail(e)) statusEl.textContent = "Impossible de charger les données. Réessayez plus tard.";
+  }
+}
+
+async function reloadMeals() {
+  await loadMeals();
+  const y = window.scrollY;
+  renderHome();
+  renderMeals();
+  window.scrollTo(0, y);
+  updateTodayBtn();
+}
+
+// ------------------------------------------------------------------ Rendu
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function button(cls, text, onClick) {
+  const b = el("button", cls, text);
+  b.type = "button";
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function mealBlock(date, slot, editable) {
+  const items = meals.get(`${date}|${slot}`) || [];
+  const box = el("div", "meal");
+  const head = el("div", "meal-head");
+  head.append(el("span", "meal-name", slot));
+
+  if (editable) {
+    const btns = el("div", "meal-btns");
+    if (items.length) {
+      btns.append(button("btn-sm", "Modifier", () => openMeal(date, slot)));
+      btns.append(button("btn-sm danger", "Vider", () => clearMeal(date, slot)));
+    } else {
+      btns.append(button("btn-sm", "Générer repas manuel", () => openMeal(date, slot)));
+    }
+    head.append(btns);
+  }
+  box.append(head);
+
+  if (!items.length) {
+    box.append(el("p", "meal-empty", "vide"));
+    return box;
+  }
+  for (const c of classes) {
+    const names = items.filter((f) => f.class_id === c.id).map((f) => f.name);
+    if (!names.length) continue;
+    const line = el("p", "meal-line", names.join(", "));
+    line.append(el("span", "cls", c.name));
+    box.append(line);
+  }
+  return box;
+}
+
+function dayCard(date, editable) {
+  const card = el("article", "day" + (date === today ? " today" : ""));
+  card.dataset.date = date;
+  const title = el("h3", "day-title", fmtDay(date));
+  if (date === today) title.append(el("small", "", "aujourd'hui"));
+  else if (date === addDays(today, 1)) title.append(el("small", "", "demain"));
+  card.append(title);
+  for (const slot of SLOTS) card.append(mealBlock(date, slot, editable));
+  return card;
+}
+
+function renderHome() {
+  const root = $("tab-home");
+  root.replaceChildren(el("h2", "section-title", "Aujourd'hui et demain"));
+  root.append(dayCard(today, false), dayCard(addDays(today, 1), false));
+  const more = el("p", "empty");
+  more.append(button("btn-primary", "Voir tous les repas", () => switchTab("meals")));
+  root.append(more);
+}
+
+function renderMeals() {
+  const root = $("tab-meals");
+  root.replaceChildren();
+  const editable = role === "write";
+  for (let i = -DAYS_BEFORE; i <= DAYS_AFTER; i++) root.append(dayCard(addDays(today, i), editable));
+}
+
+function render() {
+  renderHome();
+  renderMeals();
+  renderAdmin();
+}
+
+// ------------------------------------------------------------------ Onglets
+function switchTab(name) {
+  currentTab = name;
+  for (const t of ["home", "meals", "admin"]) $(`tab-${t}`).hidden = t !== name;
+  for (const b of $("tabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === name);
+  if (name === "meals") scrollToToday();
+  else window.scrollTo(0, 0);
+  updateTodayBtn();
+}
+
+function todayCard() {
+  return $("tab-meals").querySelector(".day.today");
+}
+
+function scrollToToday() {
+  const t = todayCard();
+  if (t) t.scrollIntoView({ block: "start" });
+}
+
+// Bouton « Aujourd'hui » flottant : visible seulement sur l'onglet Repas quand le jour
+// d'aujourd'hui n'est pas à l'écran, avec une flèche vers sa position (haut ou bas).
+function updateTodayBtn() {
+  const t = currentTab === "meals" ? todayCard() : null;
+  if (!t) { todayBtn.hidden = true; return; }
+  const r = t.getBoundingClientRect();
+  const navTop = $("tabs").getBoundingClientRect().top;
+  const visible = r.bottom > 0 && r.top < navTop;
+  todayBtn.hidden = visible;
+  todayBtn.textContent = (r.top < 0 ? "↑ " : "↓ ") + "Aujourd'hui";
+}
+
+todayBtn.addEventListener("click", scrollToToday);
+window.addEventListener("scroll", updateTodayBtn, { passive: true });
+window.addEventListener("resize", updateTodayBtn);
+
+$("tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (b) switchTab(b.dataset.tab);
+});
+
+// ------------------------------------------------------------ Confirmation
+const confirmDialog = $("confirm");
+closeOnBackdrop(confirmDialog, "no");
+$("confirm-no").addEventListener("click", () => confirmDialog.close("no"));
+$("confirm-yes").addEventListener("click", () => confirmDialog.close("yes"));
+
+function confirmAction(title, detail = "") {
+  return new Promise((resolve) => {
+    $("confirm-title").textContent = title;
+    $("confirm-detail").textContent = detail;
+    confirmDialog.returnValue = "no";
+    confirmDialog.addEventListener("close", () => resolve(confirmDialog.returnValue === "yes"), { once: true });
+    confirmDialog.showModal();
+  });
+}
+
+// ---------------------------------------------------------- Choix d'aliments
+// Champ multi-sélection : cadres avec croix + liste déroulante filtrée (« contient »).
+function createPicker(options, selected) {
+  const chosen = new Map(selected.map((f) => [f.id, f]));
+  const root = el("div", "picker");
+  const field = el("div", "picker-field");
+  const input = el("input");
+  input.type = "text";
+  input.autocomplete = "off";
+  input.placeholder = "Choisir…";
+  const list = el("ul", "picker-list");
+  list.hidden = true;
+  let active = -1;
+  let shown = [];
+
+  function renderTags() {
+    field.querySelectorAll(".tag").forEach((t) => t.remove());
+    for (const f of chosen.values()) {
+      const tag = el("span", "tag", f.name);
+      const x = button("", "×", () => { chosen.delete(f.id); renderTags(); renderList(); });
+      x.setAttribute("aria-label", `Retirer ${f.name}`);
+      tag.append(x);
+      field.insertBefore(tag, input);
+    }
+    input.placeholder = chosen.size ? "" : "Choisir…";
+  }
+
+  function renderList() {
+    const q = input.value.trim().toLowerCase();
+    shown = options.filter((o) => !chosen.has(o.id) && o.name.includes(q));
+    active = shown.length && q ? 0 : -1;
+    list.replaceChildren();
+    if (!shown.length) {
+      list.append(el("li", "none", options.length ? "Aucun aliment" : "Aucun aliment dans cette classe"));
+      return;
+    }
+    shown.forEach((o, i) => {
+      const li = el("li", i === active ? "act" : "", o.name);
+      li.addEventListener("pointerdown", (e) => e.preventDefault()); // garde le focus dans le champ
+      li.addEventListener("click", () => pick(o));
+      list.append(li);
+    });
+  }
+
+  function pick(o) {
+    chosen.set(o.id, o);
+    input.value = "";
+    renderTags();
+    renderList();
+    input.focus();
+  }
+
+  function move(delta) {
+    if (!shown.length) return;
+    active = (active + delta + shown.length) % shown.length;
+    [...list.children].forEach((li, i) => li.classList.toggle("act", i === active));
+    list.children[active].scrollIntoView({ block: "nearest" });
+  }
+
+  field.addEventListener("click", (e) => { if (e.target === field) input.focus(); });
+  input.addEventListener("focus", () => { renderList(); list.hidden = false; });
+  input.addEventListener("blur", () => { list.hidden = true; });
+  input.addEventListener("input", () => { renderList(); list.hidden = false; });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); if (shown[active]) pick(shown[active]); }
+    else if (e.key === "Backspace" && !input.value && chosen.size) {
+      chosen.delete([...chosen.keys()].pop());
+      renderTags();
+      renderList();
+    }
+  });
+
+  field.append(input);
+  root.append(field, list);
+  renderTags();
+  return { el: root, ids: () => [...chosen.keys()] };
+}
+
+// ------------------------------------------------------------ Édition repas
+const mealDialog = $("meal-dialog");
+const mealError = $("meal-error");
+const mealSave = $("meal-save");
+let mealTarget = null; // { date, slot, pickers }
+
+function openMeal(date, slot) {
+  const existing = meals.get(`${date}|${slot}`) || [];
+  const rows = $("meal-rows");
+  rows.replaceChildren();
+  const pickers = [];
+  for (const c of classes) {
+    const options = foods.filter((f) => f.class_id === c.id);
+    const picker = createPicker(options, existing.filter((f) => f.class_id === c.id));
+    pickers.push(picker);
+    const label = el("div", "part-label", c.part_name);
+    rows.append(label, picker.el);
+  }
+  mealTarget = { date, slot, pickers, existing };
+  $("meal-title").textContent = `${fmtDay(date)} · ${slot}`;
+  mealError.textContent = "";
+  mealSave.disabled = false;
+  mealDialog.showModal();
+  // Sans ça, le navigateur met le focus dans le 1er champ et ouvre sa liste déroulante d'office.
+  $("meal-title").tabIndex = -1;
+  $("meal-title").focus();
+}
+
+$("meal-cancel").addEventListener("click", () => mealDialog.close());
+closeOnBackdrop(mealDialog);
+
+mealSave.addEventListener("click", async () => {
+  const { date, slot, pickers, existing } = mealTarget;
+  const ids = pickers.flatMap((p) => p.ids());
+  const before = existing.map((f) => f.id).sort((a, b) => a - b).join();
+  if (ids.slice().sort((a, b) => a - b).join() === before) { mealDialog.close(); return; }
+
+  if (existing.length) {
+    const ok = await confirmAction(
+      ids.length ? "Êtes-vous sûr de vouloir modifier ce repas ?" : "Êtes-vous sûr de vouloir vider ce repas ?",
+      `${fmtDay(date)} · ${slot}`
+    );
+    if (!ok) return;
+  }
+  await saveMeal(date, slot, ids, mealError, mealSave);
+});
+
+async function saveMeal(date, slot, ids, errorTarget, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await rpc("set_meal", { p: password, d: date, s: slot, food_ids: ids });
+    if (mealDialog.open) mealDialog.close();
+    statusEl.textContent = "";
+    await reloadMeals();
+  } catch (e) {
+    fail(e, errorTarget);
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function clearMeal(date, slot) {
+  const ok = await confirmAction("Êtes-vous sûr de vouloir vider ce repas ?", `${fmtDay(date)} · ${slot}`);
+  if (ok) await saveMeal(date, slot, [], statusEl, null);
+}
+
+// ------------------------------------------------------------------- Admin
+function renderAdmin() {
+  const root = $("tab-admin");
+  if (role !== "admin") { root.replaceChildren(); return; }
+  root.replaceChildren(el("h2", "section-title", "Aliments"));
+
+  const chips = el("div", "chips");
+  for (const c of classes) {
+    chips.append(button("chip" + (c.id === adminClassId ? " on" : ""), c.name, () => {
+      adminClassId = c.id;
+      adminSearch = "";
+      renderAdmin();
+    }));
+  }
+  root.append(chips);
+
+  const addRow = el("form", "add-row");
+  const addInput = el("input");
+  addInput.type = "text";
+  addInput.maxLength = 60;
+  addInput.placeholder = "Nouvel aliment";
+  addInput.autocomplete = "off";
+  const addBtn = el("button", "btn-primary", "Ajouter");
+  addBtn.type = "submit";
+  addRow.append(addInput, addBtn);
+  addRow.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = addInput.value.trim().toLowerCase();
+    if (!name) return;
+    addBtn.disabled = true;
+    try {
+      await rpc("add_food", { p: password, n: name, cid: adminClassId });
+      statusEl.textContent = "";
+      await loadCatalog();
+      renderAdmin();
+      $("tab-admin").querySelector(".add-row input").focus();
+      return;
+    } catch (err) {
+      fail(err);
+    }
+    addBtn.disabled = false;
+  });
+  root.append(addRow);
+
+  const search = el("input", "search");
+  search.type = "search";
+  search.placeholder = "Rechercher";
+  search.value = adminSearch;
+  root.append(search);
+
+  const list = el("ul", "food-list");
+  root.append(list);
+  const fill = () => {
+    const q = adminSearch.trim().toLowerCase();
+    const rows = foods
+      .filter((f) => f.class_id === adminClassId && f.name.includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    list.replaceChildren();
+    if (!rows.length) {
+      const li = el("li", "empty", q ? "Aucun résultat" : "Aucun aliment dans cette classe");
+      list.append(li);
+      return;
+    }
+    for (const f of rows) {
+      const li = el("li", "food-row");
+      li.append(el("span", "fname", f.name));
+      li.append(button("btn-sm", "Modifier", () => openFoodEdit(f)));
+      li.append(button("btn-sm danger", "Supprimer", () => deleteFood(f)));
+      list.append(li);
+    }
+  };
+  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
+  fill();
+}
+
+async function deleteFood(f) {
+  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet aliment ?", f.name);
+  if (!ok) return;
+  try {
+    await rpc("delete_food", { p: password, fid: f.id });
+    statusEl.textContent = "";
+    await loadCatalog();
+    renderAdmin();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const foodDialog = $("food-dialog");
+const foodEditError = $("food-edit-error");
+let editingFood = null;
+
+function openFoodEdit(f) {
+  editingFood = f;
+  $("food-edit-name").value = f.name;
+  const sel = $("food-edit-class");
+  sel.replaceChildren(...classes.map((c) => {
+    const o = el("option", "", c.name);
+    o.value = c.id;
+    o.selected = c.id === f.class_id;
+    return o;
+  }));
+  foodEditError.textContent = "";
+  foodDialog.showModal();
+}
+
+$("food-edit-cancel").addEventListener("click", () => foodDialog.close());
+closeOnBackdrop(foodDialog);
+$("food-edit-save").addEventListener("click", async () => {
+  const name = $("food-edit-name").value.trim().toLowerCase();
+  if (!name) { foodEditError.textContent = errorText({ code: "invalid_name" }); return; }
+  const btn = $("food-edit-save");
+  btn.disabled = true;
+  try {
+    await rpc("update_food", {
+      p: password, fid: editingFood.id, n: name, cid: Number($("food-edit-class").value),
+    });
+    foodDialog.close();
+    statusEl.textContent = "";
+    await loadAll();
+  } catch (e) {
+    fail(e, foodEditError);
+  }
+  btn.disabled = false;
+});
+
+// ------------------------------------------------------------------ Session
+function storeSession(pw, r) {
+  try {
+    if (r === "admin") sessionStorage.setItem(STORAGE_KEY, pw);
+    else localStorage.setItem(STORAGE_KEY, pw);
+  } catch {}
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
+
+function unlock(r) {
+  role = r;
+  gate.hidden = true;
+  app.hidden = false;
+  $("role-badge").textContent = { read: "Lecture", write: "Écriture", admin: "Admin" }[r];
+  $("tab-admin-btn").hidden = r !== "admin";
+  statusEl.textContent = "";
+  switchTab("home");
+  loadAll();
+}
+
+function lock() {
+  clearSession();
+  password = "";
+  role = "";
+  mealDialog.open && mealDialog.close();
+  foodDialog.open && foodDialog.close();
+  app.hidden = true;
+  todayBtn.hidden = true;
+  gate.hidden = false;
+  passwordInput.focus();
+}
+
+$("quit").addEventListener("click", lock);
+
+gateForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const button = gateForm.querySelector("button");
+  button.disabled = true;
+  gateError.textContent = "";
+  try {
+    const r = await rpc("login", { p: passwordInput.value });
+    if (r) {
+      password = passwordInput.value;
+      storeSession(password, r);
+      passwordInput.value = "";
+      unlock(r);
+    } else {
+      gateError.textContent = "Mot de passe incorrect.";
+    }
+  } catch {
+    gateError.textContent = "Connexion impossible. Réessayez plus tard.";
+  }
+  button.disabled = false;
+});
+
+// Si le site reste ouvert d'un jour à l'autre, on recalcule « aujourd'hui » au retour.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && role && zurichToday() !== today) loadAll();
+});
+
+// Reprise de session : on revérifie le mot de passe (et son rôle) auprès de la base.
+(async () => {
+  let stored = "";
+  try { stored = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY) || ""; } catch {}
+  if (!stored) return;
+  try {
+    const r = await rpc("login", { p: stored });
+    if (r) { password = stored; unlock(r); } else clearSession();
+  } catch {
+    // Réseau indisponible : on garde la session et on affiche la page de connexion.
+  }
+})();
