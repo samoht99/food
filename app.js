@@ -6,7 +6,7 @@ const SUPABASE_SCHEMA = "food";
 
 // Read et Write : mot de passe gardé dans le navigateur (session persistante).
 // Admin : gardé uniquement le temps de l'onglet (révoqué à sa fermeture).
-const STORAGE_KEY = "food_pw";
+const STORAGE_KEY = "food_session"; // JSON { u: identifiant, p: mot de passe }
 
 const DAYS_BEFORE = 15;
 const DAYS_AFTER = 30;
@@ -16,6 +16,7 @@ const $ = (id) => document.getElementById(id);
 const gate = $("gate");
 const gateForm = $("gate-form");
 const gateError = $("gate-error");
+const userInput = $("user-id");
 const passwordInput = $("password");
 const app = $("app");
 const todayBtn = $("today-btn");
@@ -51,7 +52,10 @@ function closeOnBackdrop(dialog, value) {
   });
 }
 
+let userId = "";
 let password = "";
+// Identifiants envoyés à chaque appel : la base revérifie le mot de passe et le rôle à chaque fois.
+const auth = () => ({ u: userId, p: password });
 let role = "";
 let classes = [];
 let foods = [];
@@ -125,7 +129,7 @@ function fmtDay(ds) {
 
 // -------------------------------------------------------------------- Données
 async function loadCatalog() {
-  const cat = await rpc("get_catalog", { p: password });
+  const cat = await rpc("get_catalog", auth());
   classes = cat.classes;
   foods = cat.foods;
   if (!classes.some((c) => c.id === adminClassId)) adminClassId = classes[0] ? classes[0].id : null;
@@ -134,7 +138,7 @@ async function loadCatalog() {
 async function loadMeals() {
   today = zurichToday();
   const rows = await rpc("get_meals", {
-    p: password,
+    ...auth(),
     d_from: addDays(today, -DAYS_BEFORE),
     d_to: addDays(today, DAYS_AFTER),
   });
@@ -431,7 +435,7 @@ mealSave.addEventListener("click", async () => {
 async function saveMeal(date, slot, ids, errorTarget, btn) {
   if (btn) btn.disabled = true;
   try {
-    await rpc("set_meal", { p: password, d: date, s: slot, food_ids: ids });
+    await rpc("set_meal", { ...auth(), d: date, s: slot, food_ids: ids });
     if (mealDialog.open) mealDialog.close();
     statusEl.textContent = "";
     await reloadMeals();
@@ -477,7 +481,7 @@ function renderAdmin() {
     if (!name) return;
     addBtn.disabled = true;
     try {
-      await rpc("add_food", { p: password, n: name, cid: adminClassId });
+      await rpc("add_food", { ...auth(), n: name, cid: adminClassId });
       statusEl.textContent = "";
       await loadCatalog();
       renderAdmin();
@@ -525,7 +529,7 @@ async function deleteFood(f) {
   const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet aliment ?", f.name);
   if (!ok) return;
   try {
-    await rpc("delete_food", { p: password, fid: f.id });
+    await rpc("delete_food", { ...auth(), fid: f.id });
     statusEl.textContent = "";
     await loadCatalog();
     renderAdmin();
@@ -561,7 +565,7 @@ $("food-edit-save").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     await rpc("update_food", {
-      p: password, fid: editingFood.id, n: name, cid: Number($("food-edit-class").value),
+      ...auth(), fid: editingFood.id, n: name, cid: Number($("food-edit-class").value),
     });
     foodDialog.close();
     statusEl.textContent = "";
@@ -573,11 +577,22 @@ $("food-edit-save").addEventListener("click", async () => {
 });
 
 // ------------------------------------------------------------------ Session
-function storeSession(pw, r) {
+function storeSession(r) {
+  const value = JSON.stringify({ u: userId, p: password });
   try {
-    if (r === "admin") sessionStorage.setItem(STORAGE_KEY, pw);
-    else localStorage.setItem(STORAGE_KEY, pw);
+    if (r === "admin") sessionStorage.setItem(STORAGE_KEY, value);
+    else localStorage.setItem(STORAGE_KEY, value);
   } catch {}
+}
+
+function storedSession() {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY);
+    const s = raw && JSON.parse(raw);
+    return s && s.u && s.p ? s : null;
+  } catch {
+    return null;
+  }
 }
 
 function clearSession() {
@@ -598,6 +613,7 @@ function unlock(r) {
 
 function lock() {
   clearSession();
+  userId = "";
   password = "";
   role = "";
   mealDialog.open && mealDialog.close();
@@ -605,7 +621,7 @@ function lock() {
   app.hidden = true;
   todayBtn.hidden = true;
   gate.hidden = false;
-  passwordInput.focus();
+  (userInput.value ? passwordInput : userInput).focus();
 }
 
 $("quit").addEventListener("click", lock);
@@ -616,14 +632,19 @@ gateForm.addEventListener("submit", async (e) => {
   button.disabled = true;
   gateError.textContent = "";
   try {
-    const r = await rpc("login", { p: passwordInput.value });
+    const u = userInput.value.trim().toLowerCase();
+    const r = await rpc("login", { u, p: passwordInput.value });
     if (r) {
+      userId = u;
       password = passwordInput.value;
-      storeSession(password, r);
+      storeSession(r);
+      userInput.value = "";
       passwordInput.value = "";
       unlock(r);
     } else {
-      gateError.textContent = "Mot de passe incorrect.";
+      gateError.textContent = "Identifiant ou mot de passe incorrect.";
+      passwordInput.value = "";
+      passwordInput.focus();
     }
   } catch {
     gateError.textContent = "Connexion impossible. Réessayez plus tard.";
@@ -636,14 +657,14 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && role && zurichToday() !== today) loadAll();
 });
 
-// Reprise de session : on revérifie le mot de passe (et son rôle) auprès de la base.
+// Reprise de session : on revérifie l'identifiant et le mot de passe (et le rôle) auprès de la base.
 (async () => {
-  let stored = "";
-  try { stored = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY) || ""; } catch {}
+  try { localStorage.removeItem("food_pw"); } catch {} // ancienne session (mot de passe seul)
+  const stored = storedSession();
   if (!stored) return;
   try {
-    const r = await rpc("login", { p: stored });
-    if (r) { password = stored; unlock(r); } else clearSession();
+    const r = await rpc("login", stored);
+    if (r) { userId = stored.u; password = stored.p; unlock(r); } else clearSession();
   } catch {
     // Réseau indisponible : on garde la session et on affiche la page de connexion.
   }

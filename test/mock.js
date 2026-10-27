@@ -1,8 +1,8 @@
 // Fausse API en mémoire pour tester le site sans Supabase.
-// Mots de passe : r = Read, w = Write, a = Admin. Les données sont perdues au rechargement.
+// Utilisateurs : reader / r (Read), writer / w (Write), admin / a (Admin). Les données sont perdues au rechargement.
 // Reproduit les règles de supabase/schema.sql (rôles, fenêtre de dates, doublons, aliment utilisé).
 (() => {
-  try { localStorage.removeItem("food_pw"); sessionStorage.removeItem("food_pw"); } catch {}
+  try { localStorage.removeItem("food_session"); sessionStorage.removeItem("food_session"); } catch {}
 
   const classes = [
     { id: 1, name: "Protéines", part_name: "protéine" },
@@ -24,7 +24,7 @@
   const byName = (n) => foods.find((f) => f.name === n).id;
 
   const meals = new Map(); // "date|slot" -> [food ids]
-  const roles = { r: "read", w: "write", a: "admin" };
+  const users = { reader: ["r", "read"], writer: ["w", "write"], admin: ["a", "admin"] };
 
   const zurichToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date());
   const addDays = (ds, n) => {
@@ -49,7 +49,8 @@
     await new Promise((r) => setTimeout(r, 150)); // latence réseau simulée
     const fn = String(url).split("/rpc/")[1];
     const a = JSON.parse(opts.body);
-    const role = roles[a.p] || null;
+    const user = users[clean(a.u)];
+    const role = user && user[0] === a.p ? user[1] : null;
     if (fn === "login") return ok(role);
     if (!role) return fail("invalid_password");
 
@@ -118,7 +119,7 @@
   };
 
   const banner = document.createElement("div");
-  banner.textContent = "MODE TEST : données fictives en mémoire, rien n'est envoyé à Supabase. Mots de passe : r (Read), w (Write), a (Admin).";
+  banner.textContent = "MODE TEST : données fictives en mémoire, rien n'est envoyé à Supabase. Identifiant / mot de passe : reader / r, writer / w, admin / a.";
   banner.style.cssText = "background:#fff3cd;color:#664d03;font:13px system-ui;padding:6px 12px;text-align:center;position:relative;z-index:10";
   document.addEventListener("DOMContentLoaded", () => document.body.prepend(banner));
 })();
