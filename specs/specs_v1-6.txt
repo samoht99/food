@@ -86,7 +86,7 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 
 1- repas
 1-1- chaque jour comprend 2 repas : le midi et le soir
-1-2- un repas est composé de plusieurs parties : une protéine, un féculent, un légume, un laitage, une partie "autre" (anciennement "fruit")
+1-2- un repas est composé de plusieurs parties : une protéine, un féculent, un légume, un laitage, une partie "divers" (anciennement "fruit")
 1-3- chaque partie dans un repas peut contenir 1 ou plusieurs aliments
 1-4- chaque partie de repas correspond à une classe d'aliments
 1-5- chaque partie dans un repas ne peut contenir que les aliments dont les classes incluent la classe qui lui correspond. Un aliment qui a plusieurs classes remplit toutes les parties correspondantes à la fois (il est compté une seule fois dans le repas)
@@ -100,7 +100,7 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 2-3-2- classe Féculents = partie féculent
 2-3-3- classe Légumes = partie légume
 2-3-4- classe Laitages = partie laitage
-2-3-5- classe Autres = partie autre (la classe s'appelait Fruits dans les versions précédentes)
+2-3-5- classe Autres = partie divers (la classe s'appelait Fruits dans les versions précédentes)
 2-4- les classes se créent, se renomment et se suppriment uniquement en SQL (aucune modification du code n'est nécessaire : le site lit les classes en base). Renommer une classe ne change rien aux aliments et aux repas, qui y sont reliés par un identifiant et non par le nom ; il faut changer à la fois le nom de la classe et le nom de sa partie de repas
 
 3- liste des aliments existant

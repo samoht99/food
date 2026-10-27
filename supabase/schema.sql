@@ -86,7 +86,7 @@ insert into food.classes (name, part_name, position) values
   ('Féculents', 'féculent', 2),
   ('Légumes',   'légume',   3),
   ('Laitages',  'laitage',  4),
-  ('Fruits',    'fruit',    5)
+  ('Autres',    'divers',   5)
 on conflict do nothing;
 
 -- RLS activée et AUCUNE policy : les rôles anon/authenticated n'ont aucun accès

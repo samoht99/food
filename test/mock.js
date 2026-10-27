@@ -9,7 +9,7 @@
     { id: 2, name: "Féculents", part_name: "féculent" },
     { id: 3, name: "Légumes", part_name: "légume" },
     { id: 4, name: "Laitages", part_name: "laitage" },
-    { id: 5, name: "Fruits", part_name: "fruit" },
+    { id: 5, name: "Autres", part_name: "divers" },
   ];
   const seed = {
     1: ["poulet", "poisson", "oeuf", "boeuf haché", "jambon"],
