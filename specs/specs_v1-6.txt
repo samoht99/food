@@ -1,0 +1,150 @@
+SPECIFICATIONS (v1-6)
+
+***** Contexte général
+
+Un site web qui me permet de définir ma liste de repas pour les jours à venir et la liste des courses correspondante.
+Pour la v1 concentrons-nous uniquement sur la partie repas (la liste de courses n'est pas prise en compte pour l'instant).
+
+Aujourd'hui je planifie mes repas pour les 2 prochaines semaines et les écris dans un fichier bloc note, ce qui est pénible.
+J'aimerais maintenant que ce soit sur un site web facilement accessible depuis mon pc ou mon smartphone.
+Tout le site (interface, messages, libellés) est en français.
+
+***** Expérience utilisateur
+
+1- Ouverture du site
+1-1- quand j'ouvre le site web on me demande un identifiant et un mot de passe. Selon l'identifiant (reader, writer ou admin) je suis dans un mode différent et je vois différents onglets
+1-2- une fois le site ouvert, je vois une page d'accueil qui affiche les repas d'aujourd'hui et de demain, avec un accès rapide à l'onglet Repas
+1-3- un bouton "Quitter" permet de fermer la session pour pouvoir changer de mode
+
+2- Onglet Repas
+quand je clique sur l'onglet Repas, je vois la liste des 15 derniers jours, d'aujourd'hui et des 30 prochains jours (aujourd'hui inclus dans la fenêtre). Cette liste est dynamique, chaque jour elle "glisse".
+À l'ouverture de l'onglet, la liste défile automatiquement jusqu'à aujourd'hui.
+2-1- pour chaque jour on voit les repas correspondant
+2-2- pour chaque repas on voit les aliments correspondant à chaque classe
+2-3- si un jour est vide = pas de repas rempli, on l'affiche quand même avec ses 2 repas vides
+2-4- un repas vide est affiché juste avec la notion "vide"
+2-5- un repas rempli est affiché avec ses aliments et à côté la ou les classes de l'aliment. Les aliments qui ont exactement les mêmes classes sont regroupés sur une ligne ("poulet, jambon · Protéines") ; un aliment qui a plusieurs classes apparaît une seule fois avec toutes ses classes ("sandwich · Protéines, Féculents, Légumes"). Seules les parties remplies sont prises en compte (les parties vides ne sont pas affichées)
+2-6- je peux modifier un repas = le générer manuellement pour un jour donné en cliquant sur un bouton "Générer repas manuel" situé à côté de chaque repas de chaque jour (le jour et le repas concernés sont donc déjà connus)
+2-6-1- un popup d'input apparaît avec les parties du repas à remplir
+2-6-2- je peux laisser une partie de repas vide
+2-6-3- pour remplir une partie de repas, je ne peux inscrire n'importe quel aliment : l'aliment doit être dans la liste des aliments existant et doit avoir, parmi ses classes, la classe correspondant à la partie de repas en question
+2-6-4- je peux sélectionner plusieurs aliments pour une même partie de repas
+2-6-5- dans ce popup, je peux copier le contenu d'un repas existant : le popup propose tous les repas non vides qui existent en base de données (donc aussi ceux de plus de 15 jours qui ne sont plus affichés dans l'UI, jusqu'à 30 jours dans le passé, et ceux des jours à venir), sauf le repas en cours de modification ; un repas vide n'est jamais proposé (aucun intérêt)
+2-6-6- choisir un repas à copier remplit le popup avec ses aliments (en remplaçant la sélection en cours) ; je peux ensuite ajouter ou retirer des aliments. Rien n'est enregistré tant que je n'ai pas cliqué sur "Enregistrer" ; "Annuler" abandonne la copie
+2-6-7- les règles de confirmation sont inchangées : pas de popup de confirmation si le repas cible était vide (4-3), une confirmation si le repas cible était déjà rempli (4-2)
+2-7- je peux modifier n'importe quel repas affiché dans l'UI, donc je peux modifier dans le passé les 15 derniers jours et dans le futur les 30 prochains jours.
+2-8- un bouton "Vider" à côté de chaque repas rempli permet de supprimer d'un coup tous les aliments du repas (plus simple que de les enlever un par un dans le popup de modification)
+
+3- Onglet Admin
+3-1- Il doit permettre les actions suivantes :
+3-1-1- afficher la liste de tous les aliments existant, répartis par classe = une liste par classe d'aliments. Un aliment qui a plusieurs classes apparaît dans la liste de chacune de ses classes
+3-1-2- ajouter un nouvel aliment en lui donnant un nom et en l'associant à une ou plusieurs classes (au moins une)
+3-1-3- modifier un aliment (son nom, ses classes). Tous les repas qui utilisent cet aliment sont modifiés en conséquence (renommer un aliment le renomme partout). Sur un aliment déjà utilisé dans des repas, on peut ajouter des classes mais pas en retirer (retirer une classe changerait rétroactivement la composition des repas passés) ; le retrait est refusé avec un message qui l'indique
+3-1-4- supprimer un aliment avec un popup de confirmation. Si l'aliment est utilisé dans au moins un repas, la suppression est bloquée avec un message qui l'indique
+3-2- Il ne doit pas permettre les actions suivantes :
+3-2-1- supprimer la liste entière --> devra être fait directement via SQL en DB
+3-2-2- supprimer une classe d'aliment --> devra être fait directement via SQL en DB
+3-2-3- créer une classe d'aliment --> devra être fait directement via SQL en DB
+
+4- Modifications
+4-1- chaque action de suppression doit avoir un popup de confirmation pour être sûr de ce qu'on fait
+4-2- chaque action de modification d'un repas déjà rempli doit avoir un popup de confirmation pour être sûr de ce qu'on fait. Cela inclut le fait de vider un repas (via le bouton "Vider" ou en enlevant tous les aliments dans le popup de modification)
+4-3- la modification d'un repas vide (génération d'un repas à partir d'un repas vide) ne nécessite pas de popup de confirmation
+
+***** UI
+
+Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout smartphone.
+
+1- Onglet Repas
+1-1- le bouton "Générer repas manuel" est à côté de chaque repas dans chaque jour --> en cliquant dessus on sait déjà quel repas de quel jour on modifie
+1-2- Concernant le popup de génération de repas :
+1-2-1- il affiche chaque partie de repas sur une ligne différente
+1-2-2- chaque ligne a la partie de repas à gauche en en-tête et un champ d'input à droite
+1-2-3- quand on clique dans le champ d'input, une liste déroulante apparaît avec tous les aliments existant dont les classes incluent la classe correspondant à la partie de repas en question
+1-2-4- quand on commence à taper, la liste déroulante affiche seulement les aliments qui contiennent les lettres tapées
+1-2-5- quand on sélectionne un aliment, il s'affiche dans le champ d'input, dans un petit cadre avec une croix pour pouvoir l'enlever, et on peut cliquer à côté dans le champ d'input pour ajouter un autre aliment
+1-2-6- la liste déroulante flotte au-dessus des lignes suivantes (elle ne décale pas le contenu du popup), pour que le clic sur "Enregistrer" fonctionne même quand on est encore dans un champ
+1-2-7- un clic en dehors du popup (sur le fond) le ferme sans enregistrer ; un clic à l'intérieur du popup ne le ferme jamais
+1-2-8- un aliment qui a plusieurs classes (ex. un sandwich : protéines, féculents, légumes) est choisi une seule fois : il apparaît alors dans le champ de chacune de ses classes, et l'enlever d'un champ l'enlève de tous
+1-2-9- en haut du popup, une liste déroulante "Copier depuis un repas existant" propose les repas à copier (règle 2-6-5), rangés par jour du plus récent au plus ancien (midi puis soir pour un même jour) ; chaque ligne montre le repas et ses aliments (texte coupé avec "…" s'il est trop long) ; si aucun repas n'est copiable, la liste l'indique ("Aucun repas à copier")
+1-3- un bouton flottant "Aujourd'hui" permet de revenir rapidement au jour d'aujourd'hui : il suit le défilement, n'apparaît que sur l'onglet Repas quand aujourd'hui n'est pas visible à l'écran, et indique par une flèche (haut ou bas) où se trouve aujourd'hui
+
+2- Onglet Admin
+2-1- une seule page "Aliments" avec 5 puces (une par classe : Protéines, Féculents, Légumes, Laitages, Autres) pour passer d'une classe à l'autre sans niveaux de sous-onglets imbriqués. Pour la classe sélectionnée : un champ d'ajout en haut, un champ de recherche, puis la liste triée par ordre alphabétique avec, pour chaque aliment, un bouton modifier et un bouton supprimer.
+2-2- à l'ajout, une case à cocher par classe permet de choisir la ou les classes du nouvel aliment (la classe affichée est cochée d'office) ; la modification d'un aliment se fait dans un popup avec son nom et les mêmes cases à cocher
+2-3- dans la liste d'une classe, un aliment qui a d'autres classes l'indique en petit sous son nom ("aussi : Féculents, Légumes")
+
+3- Page de connexion
+3-1- elle contient uniquement le titre, le champ identifiant, le champ mot de passe et le bouton "Entrer", sans phrase explicative
+3-2- un identifiant ou un mot de passe incorrect donne le même message ("Identifiant ou mot de passe incorrect.") sans préciser lequel des deux est faux
+
+4- Messages d'erreur
+4-1- une erreur (par exemple suppression d'un aliment utilisé dans des repas) s'affiche dans un bandeau rouge fixé en haut de l'écran, visible quel que soit le défilement ; il disparaît seul après quelques secondes ou en cliquant dessus
+4-2- les erreurs d'un formulaire dans un popup (génération de repas, modification d'un aliment) s'affichent dans le popup lui-même
+
+***** Modèle de données
+
+1- repas
+1-1- chaque jour comprend 2 repas : le midi et le soir
+1-2- un repas est composé de plusieurs parties : une protéine, un féculent, un légume, un laitage, une partie "autre" (anciennement "fruit")
+1-3- chaque partie dans un repas peut contenir 1 ou plusieurs aliments
+1-4- chaque partie de repas correspond à une classe d'aliments
+1-5- chaque partie dans un repas ne peut contenir que les aliments dont les classes incluent la classe qui lui correspond. Un aliment qui a plusieurs classes remplit toutes les parties correspondantes à la fois (il est compté une seule fois dans le repas)
+1-6- les repas passés (repas d'un jour dans le passé) sont conservés 30 jours en base de données (même si l'UI n'affiche que les 15 derniers jours), puis supprimés automatiquement pour limiter la taille de la base (plan gratuit). Cette suppression est déclenchée uniquement quand quelqu'un enregistre ou vide un repas (quel que soit le jour modifié), pas par une tâche quotidienne : si personne ne modifie rien pendant un moment, les vieux repas restent en base jusqu'à la prochaine modification
+
+2- classes de repas
+2-1- une classe de repas est une catégorie d'aliments
+2-2- une classe de repas a donc plusieurs aliments qui peuvent lui être associés
+2-3- la correspondance entre classe de repas et partie de repas est la suivante :
+2-3-1- classe Protéines = partie protéine
+2-3-2- classe Féculents = partie féculent
+2-3-3- classe Légumes = partie légume
+2-3-4- classe Laitages = partie laitage
+2-3-5- classe Autres = partie autre (la classe s'appelait Fruits dans les versions précédentes)
+2-4- les classes se créent, se renomment et se suppriment uniquement en SQL (aucune modification du code n'est nécessaire : le site lit les classes en base). Renommer une classe ne change rien aux aliments et aux repas, qui y sont reliés par un identifiant et non par le nom ; il faut changer à la fois le nom de la classe et le nom de sa partie de repas
+
+3- liste des aliments existant
+3-1- un aliment est défini par son nom et par une ou plusieurs classes de repas auxquelles il appartient (au moins une). Exemple : un sandwich est à la fois protéines, féculents et légumes. Cela permet d'extraire plus tard les données de façon exacte par classe.
+3-2- un aliment est unique par son nom : insérer un aliment dont le nom existe déjà donne une erreur, quelles que soient les classes demandées (le nom d'un aliment ne peut pas exister deux fois, y compris avec une autre classe). Pour une variante (ex. "sandwich végétarien"), créer un aliment distinct avec ses propres classes.
+3-3- la comparaison des noms est stricte : "creme" et "crème" sont deux aliments différents
+3-4- casse forcée quel que soit l'input de l'utilisateur :
+3-4-1- tout en minuscules pour les aliments, les noms de repas (midi, soir) et les parties de repas
+3-4-2- première lettre en majuscule et les autres en minuscules pour les classes
+3-5- les aliments sont saisis un par un dans l'onglet Admin (pas d'import initial)
+3-6- pour l'analyse des données, les classes d'un repas passé sont celles que l'aliment a actuellement (pas de copie figée au moment du repas) : c'est la raison de la règle 3-1-3 (on peut ajouter des classes à un aliment utilisé, pas en retirer)
+
+4- journal d'audit
+4-1- une table d'audit en base enregistre toutes les actions de modification réussies faites depuis le site par un utilisateur write ou admin
+4-2- les 6 actions consignées : créer un repas (remplir un repas vide), modifier un repas rempli, vider un repas (rôle write) ; ajouter, modifier, supprimer un aliment (rôle admin)
+4-3- chaque ligne contient la date, l'identifiant, le rôle, le type d'action, la cible (jour et repas, ou nom de l'aliment) et l'état avant et après (noms d'aliments, et pour un aliment son nom et ses classes, pas d'identifiants techniques, pour rester lisible même si un aliment est supprimé plus tard)
+4-4- ne sont pas consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien (repas identique, aliment inchangé), la suppression automatique des vieux repas, et tout ce qui est fait directement en SQL (classes, utilisateurs, mots de passe, suppressions en masse)
+4-5- les lignes d'audit sont conservées 12 mois, puis supprimées automatiquement en même temps que les vieux repas (à chaque enregistrement de repas)
+4-6- pour l'instant l'audit se consulte directement en base (SQL) ; son affichage dans le site est prévu plus tard
+
+***** Sécurité
+
+1- le site est protégé par 3 utilisateurs (identifiants : reader, writer, admin), chacun avec son propre mot de passe, que l'on entre en ouvrant le site. Selon l'utilisateur je suis dans un mode différent. L'identifiant n'est pas sensible à la casse :
+1-1- Read = lecture (identifiant : reader). Grâce à cet utilisateur on a accès au site en lecture, on voit l'onglet "Repas" et son contenu.
+1-2- Write = écriture (identifiant : writer). Grâce à cet utilisateur on a tous les droits de l'utilisateur Read + on a accès aux boutons de modification des repas (générer, vider).
+1-3- Admin = administrateur (identifiant : admin). Grâce à cet utilisateur on a tous les droits de l'utilisateur Read + on a accès à l'onglet "Admin" avec tout ce qu'il contient et toutes ses actions. Admin ne peut PAS modifier les repas (c'est volontaire) : les actions de modification d'aliments sont réservées à l'onglet Admin, les actions de modification de repas à l'onglet Repas avec l'utilisateur writer.
+2- On ne peut pas passer d'un mode à l'autre une fois connecté. Pour changer de mode il faut quitter le site (bouton "Quitter"), le réouvrir pour pouvoir entrer l'identifiant et le mot de passe du mode que l'on veut.
+3- Persistance de la session :
+3-1- Read et Write : la session est conservée (pas besoin de retaper l'identifiant et le mot de passe à chaque ouverture, par exemple sur smartphone)
+3-2- Admin (plus sensible) : le droit est révoqué à chaque fermeture du site / de l'onglet
+4- La sécurité est vérifiée côté serveur (base de données), pas seulement dans l'interface : quelqu'un sans le bon identifiant et le bon mot de passe ne peut ni lire ni écrire en contournant le site.
+5- Les utilisateurs sont stockés en base dans une table (identifiant, rôle, mot de passe haché) : pour l'instant seulement reader, writer et admin, mais d'autres pourront être ajoutés plus tard directement en SQL.
+
+***** Détails techniques
+
+1- Stack identique à celle du projet liste de naissance (https://github.com/samoht99/birthlist) : site statique HTML/CSS/JS hébergé sur GitHub Pages, données dans Supabase, accès uniquement via des fonctions qui vérifient l'identifiant et le mot de passe (mots de passe stockés hachés). Pas d'appel automatique pour éviter la mise en pause de Supabase : l'activité normale (insertions dans la base) suffit.
+2- Github:
+2-1- compte existant avec organisation samoht99
+2-2- nouveau repo dans l'organisation samoht99, ce repo s'appelle "food"
+3- Supabase:
+3-1- compte existant avec organisation samoht99
+3-2- projet existant dans l'organisation samoht99, ce projet s'appelle family
+3-3- dans le projet family créer un nouveau schéma DB appelé "food"
+4- Les accès (GitHub, Supabase) seront demandés au moment d'écrire le code.
+5- Fuseau horaire de référence pour "aujourd'hui" : Europe/Zurich.
+6- Dossier local du projet : C:\Users\Thomas\Workspace\food (à côté du dossier birthlist). Le dossier specs du repo contient toutes les versions des specs (specs_v1-1 = specs initiales, specs_v1-2 = après les premières questions, specs_v1-3 = après les questions suivantes, specs_v1-4 = ajout de l'identifiant à la connexion, du journal d'audit et ajustements d'interface, specs_v1-5 = aliments multi-classes, specs_v1-6 = copie d'un repas existant et classe Fruits renommée en Autres).
+7- Le dossier test du repo contient une version du site avec une fausse API en mémoire (identifiants reader / r, writer / w, admin / a) pour essayer l'interface sans Supabase ; elle n'est pas utilisée par le vrai site.
