@@ -425,6 +425,7 @@ function openMeal(date, slot) {
     rows.append(label, picker.el);
   }
   mealTarget = { date, slot, chosen, existing };
+  fillCopyChoices(mealTarget, refreshAll);
   $("meal-title").textContent = `${fmtDay(date)} · ${slot}`;
   mealError.textContent = "";
   mealSave.disabled = false;
@@ -432,6 +433,59 @@ function openMeal(date, slot) {
   // Sans ça, le navigateur met le focus dans le 1er champ et ouvre sa liste déroulante d'office.
   $("meal-title").tabIndex = -1;
   $("meal-title").focus();
+}
+
+// Copie d'un repas existant : la liste propose tous les repas non vides présents en base
+// (y compris ceux qui ne sont plus affichés dans les 15 derniers jours), sauf le repas en cours
+// de modification. Choisir un repas remplace la sélection du popup par ses aliments ; rien
+// n'est enregistré tant qu'on n'a pas cliqué sur « Enregistrer ».
+const copySelect = $("meal-copy");
+
+async function fillCopyChoices(target, refreshAll) {
+  copySelect.disabled = true;
+  copySelect.replaceChildren(new Option("Chargement…", ""));
+  let rows;
+  try {
+    rows = await rpc("get_meals", { ...auth(), d_from: "1970-01-01", d_to: "2999-12-31" });
+  } catch (e) {
+    if (mealTarget === target) {
+      copySelect.replaceChildren(new Option("Liste indisponible", ""));
+      fail(e, mealError);
+    }
+    return;
+  }
+  if (mealTarget !== target || !mealDialog.open) return; // la fenêtre a changé entre-temps
+
+  const sources = new Map(); // "2026-10-27|midi" -> [{ id, name, class_ids }]
+  for (const r of rows) {
+    const key = `${r.meal_date}|${r.slot}`;
+    if (key === `${target.date}|${target.slot}`) continue;
+    if (!sources.has(key)) sources.set(key, []);
+    sources.get(key).push({ id: r.food_id, name: r.food_name, class_ids: r.class_ids || [] });
+  }
+
+  copySelect.replaceChildren(new Option(sources.size ? "Choisir un repas…" : "Aucun repas à copier", ""));
+  const days = [...new Set([...sources.keys()].map((k) => k.split("|")[0]))].sort().reverse();
+  for (const day of days) {
+    const group = document.createElement("optgroup");
+    group.label = fmtDay(day);
+    for (const slot of SLOTS) {
+      const items = sources.get(`${day}|${slot}`);
+      if (!items) continue;
+      const text = `${slot} · ${items.map((f) => f.name).join(", ")}`;
+      group.append(new Option(text.length > 70 ? `${text.slice(0, 69)}…` : text, `${day}|${slot}`));
+    }
+    copySelect.append(group);
+  }
+  copySelect.disabled = !sources.size;
+
+  copySelect.onchange = () => {
+    const items = sources.get(copySelect.value);
+    if (!items) return;
+    target.chosen.clear();
+    for (const f of items) target.chosen.set(f.id, foods.find((x) => x.id === f.id) || f);
+    refreshAll();
+  };
 }
 
 $("meal-cancel").addEventListener("click", () => mealDialog.close());

@@ -149,6 +149,12 @@ h2.section-title { font-family: var(--serif); font-weight: 500; font-size: 1.25r
 .form-grid { display: grid; grid-template-columns: 70px 1fr; gap: 10px; align-items: center; margin-top: 12px; }
 
 .meal-dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
+.copy-row { margin: 10px 0 12px; }
+.copy-row label { display: block; font-size: .85rem; color: var(--ink-soft); margin-bottom: 4px; }
+.copy-row select {
+  width: 100%; padding: 9px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff;
+}
 .meal-rows { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px 8px; align-items: start; }
 .part-label { padding-top: 8px; font-size: .9rem; }
 

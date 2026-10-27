@@ -42,6 +42,7 @@
   put(1, "midi", ["boeuf haché", "pâtes", "épinards", "fromage blanc", "banane"]);
   put(2, "soir", ["jambon", "polenta", "haricots verts"]);
   put(1, "soir", ["sandwich jambon-salade", "pomme"]);
+  put(-20, "midi", ["poisson", "riz", "courgette", "yaourt"]); // hors des 15 jours affichés, encore en base
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
   const ok = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body });
