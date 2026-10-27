@@ -60,6 +60,9 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 1-2-3- quand on clique dans le champ d'input, une liste déroulante apparaît avec tous les aliments existant et assignés à la classe correspondant à la partie de repas en question
 1-2-4- quand on commence à taper, la liste déroulante affiche seulement les aliments qui contiennent les lettres tapées
 1-2-5- quand on sélectionne un aliment, il s'affiche dans le champ d'input, dans un petit cadre avec une croix pour pouvoir l'enlever, et on peut cliquer à côté dans le champ d'input pour ajouter un autre aliment
+1-2-6- la liste déroulante flotte au-dessus des lignes suivantes (elle ne décale pas le contenu du popup), pour que le clic sur "Enregistrer" fonctionne même quand on est encore dans un champ
+1-2-7- un clic en dehors du popup (sur le fond) le ferme sans enregistrer ; un clic à l'intérieur du popup ne le ferme jamais
+1-3- un bouton flottant "Aujourd'hui" permet de revenir rapidement au jour d'aujourd'hui : il suit le défilement, n'apparaît que sur l'onglet Repas quand aujourd'hui n'est pas visible à l'écran, et indique par une flèche (haut ou bas) où se trouve aujourd'hui
 
 2- Onglet Admin
 2-1- une seule page "Aliments" avec 5 puces (une par classe : Protéines, Féculents, Légumes, Laitages, Fruits) pour passer d'une classe à l'autre sans niveaux de sous-onglets imbriqués. Pour la classe sélectionnée : un champ d'ajout en haut, un champ de recherche, puis la liste triée par ordre alphabétique avec, pour chaque aliment, un bouton modifier et un bouton supprimer.
@@ -67,6 +70,10 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 3- Page de connexion
 3-1- elle contient uniquement le titre, le champ identifiant, le champ mot de passe et le bouton "Entrer", sans phrase explicative
 3-2- un identifiant ou un mot de passe incorrect donne le même message ("Identifiant ou mot de passe incorrect.") sans préciser lequel des deux est faux
+
+4- Messages d'erreur
+4-1- une erreur (par exemple suppression d'un aliment utilisé dans des repas) s'affiche dans un bandeau rouge fixé en haut de l'écran, visible quel que soit le défilement ; il disparaît seul après quelques secondes ou en cliquant dessus
+4-2- les erreurs d'un formulaire dans un popup (génération de repas, modification d'un aliment) s'affichent dans le popup lui-même
 
 ***** Modèle de données
 
@@ -76,7 +83,7 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 1-3- chaque partie dans un repas peut contenir 1 ou plusieurs aliments
 1-4- chaque partie de repas correspond à une classe d'aliments
 1-5- chaque partie dans un repas ne peut contenir que les aliments de la classe qui lui correspond
-1-6- les repas passés (repas d'un jour dans le passé) sont conservés 30 jours en base de données (même si l'UI n'affiche que les 15 derniers jours), puis supprimés automatiquement pour limiter la taille de la base (plan gratuit)
+1-6- les repas passés (repas d'un jour dans le passé) sont conservés 30 jours en base de données (même si l'UI n'affiche que les 15 derniers jours), puis supprimés automatiquement pour limiter la taille de la base (plan gratuit). Cette suppression est déclenchée uniquement quand quelqu'un enregistre ou vide un repas (quel que soit le jour modifié), pas par une tâche quotidienne : si personne ne modifie rien pendant un moment, les vieux repas restent en base jusqu'à la prochaine modification
 
 2- classes de repas
 2-1- une classe de repas est une catégorie d'aliments
@@ -96,6 +103,14 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 3-4-1- tout en minuscules pour les aliments, les noms de repas (midi, soir) et les parties de repas
 3-4-2- première lettre en majuscule et les autres en minuscules pour les classes
 3-5- les aliments sont saisis un par un dans l'onglet Admin (pas d'import initial)
+
+4- journal d'audit
+4-1- une table d'audit en base enregistre toutes les actions de modification réussies faites depuis le site par un utilisateur write ou admin
+4-2- les 6 actions consignées : créer un repas (remplir un repas vide), modifier un repas rempli, vider un repas (rôle write) ; ajouter, modifier, supprimer un aliment (rôle admin)
+4-3- chaque ligne contient la date, l'identifiant, le rôle, le type d'action, la cible (jour et repas, ou nom de l'aliment) et l'état avant et après (noms d'aliments, pas d'identifiants techniques, pour rester lisible même si un aliment est supprimé plus tard)
+4-4- ne sont pas consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien (repas identique, aliment inchangé), la suppression automatique des vieux repas, et tout ce qui est fait directement en SQL (classes, utilisateurs, mots de passe, suppressions en masse)
+4-5- les lignes d'audit sont conservées 12 mois, puis supprimées automatiquement en même temps que les vieux repas (à chaque enregistrement de repas)
+4-6- pour l'instant l'audit se consulte directement en base (SQL) ; son affichage dans le site est prévu plus tard
 
 ***** Sécurité
 
@@ -122,4 +137,5 @@ Le site doit être facile d'utilisation et lisible sur ordinateur mais surtout s
 3-3- dans le projet family créer un nouveau schéma DB appelé "food"
 4- Les accès (GitHub, Supabase) seront demandés au moment d'écrire le code.
 5- Fuseau horaire de référence pour "aujourd'hui" : Europe/Zurich.
-6- Dossier local du projet : C:\Users\Thomas\Workspace\food (à côté du dossier birthlist). Le dossier specs du repo contient toutes les versions des specs (specs_v1-1 = specs initiales, specs_v1-2 = après les premières questions, specs_v1-3 = après les questions suivantes, specs_v1-4 = ajout de l'identifiant à la connexion).
+6- Dossier local du projet : C:\Users\Thomas\Workspace\food (à côté du dossier birthlist). Le dossier specs du repo contient toutes les versions des specs (specs_v1-1 = specs initiales, specs_v1-2 = après les premières questions, specs_v1-3 = après les questions suivantes, specs_v1-4 = ajout de l'identifiant à la connexion, du journal d'audit et ajustements d'interface).
+7- Le dossier test du repo contient une version du site avec une fausse API en mémoire (identifiants reader / r, writer / w, admin / a) pour essayer l'interface sans Supabase ; elle n'est pas utilisée par le vrai site.
