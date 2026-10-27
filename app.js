@@ -85,7 +85,10 @@ async function rpc(name, args) {
     err.invalidPassword = body.message === "invalid_password";
     throw err;
   }
-  return res.json();
+  // Une fonction qui ne renvoie rien (set_meal, update_food, delete_food) répond avec un corps vide :
+  // on ne lit donc pas la réponse comme du JSON sans vérifier qu'il y en a une.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function errorText(e) {

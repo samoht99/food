@@ -44,7 +44,12 @@
   put(1, "soir", ["sandwich jambon-salade", "pomme"]);
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
-  const ok = (body) => ({ ok: true, json: async () => body });
+  const ok = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body });
+  // Fonction PostgreSQL qui renvoie void : PostgREST répond 204 avec un corps vide (res.json() échoue).
+  const voidOk = () => ({
+    ok: true, status: 204, text: async () => "",
+    json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
+  });
   const inWindow = (d) => d >= addDays(zurichToday(), -15) && d <= addDays(zurichToday(), 30);
   const clean = (n) => String(n || "").trim().toLowerCase();
 
@@ -82,7 +87,7 @@
         if (ids.some((id) => !foods.some((f) => f.id === id))) return fail("unknown_food");
         if (ids.length) meals.set(`${a.d}|${a.s}`, ids);
         else meals.delete(`${a.d}|${a.s}`);
-        return ok(null);
+        return voidOk();
       }
 
       case "add_food": {
@@ -112,7 +117,7 @@
         if (used && f.class_ids.some((c) => !cids.includes(c))) return fail("food_in_use_class");
         f.name = name;
         f.class_ids = cids;
-        return ok(null);
+        return voidOk();
       }
 
       case "delete_food": {
@@ -120,7 +125,7 @@
         const n = [...meals.values()].filter((ids) => ids.includes(a.fid)).length;
         if (n) return fail("food_in_use", String(n));
         foods = foods.filter((f) => f.id !== a.fid);
-        return ok(null);
+        return voidOk();
       }
     }
     return fail("unknown_function");
