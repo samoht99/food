@@ -306,22 +306,6 @@ begin
 end;
 $$;
 
--- Appelée chaque jour par GitHub Actions pour éviter la mise en pause du projet
--- Supabase gratuit. Écrit un horodatage, purge les vieux repas, ne renvoie aucune donnée.
-create or replace function food.ping()
-returns boolean
-language plpgsql
-security definer
-set search_path = food
-as $$
-begin
-  insert into food.app_config (key, value) values ('last_ping', now()::text)
-  on conflict (key) do update set value = excluded.value;
-  perform food._purge_old_meals();
-  return true;
-end;
-$$;
-
 -- ---------------------------------------------------------------- Droits
 revoke execute on function food._role(text)                      from public, anon, authenticated;
 revoke execute on function food._check(text, text[])             from public, anon, authenticated;
@@ -335,7 +319,6 @@ revoke execute on function food.set_meal(text, date, text, bigint[])     from pu
 revoke execute on function food.add_food(text, text, smallint)           from public;
 revoke execute on function food.update_food(text, bigint, text, smallint) from public;
 revoke execute on function food.delete_food(text, bigint)                from public;
-revoke execute on function food.ping()                                   from public;
 
 grant execute on function food.login(text)                               to anon, authenticated;
 grant execute on function food.get_catalog(text)                         to anon, authenticated;
@@ -344,4 +327,3 @@ grant execute on function food.set_meal(text, date, text, bigint[])      to anon
 grant execute on function food.add_food(text, text, smallint)            to anon, authenticated;
 grant execute on function food.update_food(text, bigint, text, smallint) to anon, authenticated;
 grant execute on function food.delete_food(text, bigint)                 to anon, authenticated;
-grant execute on function food.ping()                                    to anon, authenticated;

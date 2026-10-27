@@ -11,7 +11,6 @@ Petit site statique (HTML/CSS/JS) hébergé sur GitHub Pages pour planifier les 
 - `supabase/schema.sql` : tables et fonctions de la base (installation neuve).
 - `supabase/migrations/` : scripts à exécuter, dans l'ordre, sur une base déjà installée.
 - `test/` : version du site avec une fausse API en mémoire, pour essayer l'interface sans Supabase (ouvrir `test/index.html` ; mots de passe `r`, `w`, `a`). Non utilisée par le vrai site.
-- `.github/workflows/keepalive.yml` : appel quotidien qui évite la mise en pause du projet Supabase gratuit et purge les repas de plus de 30 jours.
 
 La sécurité repose sur la base : les tables sont verrouillées (RLS sans policy) et le site n'y accède que via des fonctions qui vérifient le mot de passe (stocké haché) **et** le rôle autorisé pour chaque action. L'URL et la clé `sb_publishable_…` présentes dans le code sont publiques par conception. **Ne jamais commiter** la clé `sb_secret_…`, le mot de passe de la base ni les mots de passe du site.
 
@@ -56,12 +55,12 @@ Changer un mot de passe : relancer l'étape 2 avec la nouvelle valeur (les perso
 - Aliments, noms de repas (`midi`, `soir`) et parties de repas en minuscules ; classes avec une majuscule initiale.
 - Un aliment appartient à une seule classe ; deux noms identiques (même casse) sont refusés. « creme » et « crème » sont deux aliments différents.
 - Un aliment utilisé dans un repas ne peut être ni supprimé ni changé de classe. Le renommer le renomme dans tous les repas.
-- Le site affiche les 15 derniers jours et les 30 prochains. Les repas passés sont gardés 30 jours en base puis supprimés automatiquement (à chaque sauvegarde de repas et par le workflow quotidien).
+- Le site affiche les 15 derniers jours et les 30 prochains. Les repas passés sont gardés 30 jours en base puis supprimés automatiquement, mais seulement quand quelqu'un enregistre ou vide un repas (quel que soit le jour modifié).
 - « Aujourd'hui » est calculé en heure de Zurich.
 
 ## Mise en pause de Supabase
 
-Le workflow `keepalive.yml` appelle chaque jour la fonction `ping`, qui écrit un horodatage (`last_ping`) dans `food.app_config`. Pour vérifier : `select * from food.app_config where key = 'last_ping';`. Si le projet est malgré tout mis en pause, le réactiver depuis le dashboard Supabase (les données sont conservées). GitHub désactive les workflows planifiés après 60 jours sans activité dans le dépôt : en cas d'avertissement, réactiver le workflow dans l'onglet **Actions**.
+Le plan gratuit de Supabase met en pause un projet resté inactif 7 jours. Il n'y a pas d'appel automatique pour l'éviter : l'activité normale (insertions dans la base, utilisation du site) suffit. Si le projet est mis en pause, le réactiver depuis le dashboard Supabase (les données sont conservées).
 
 ## Limites connues
 
