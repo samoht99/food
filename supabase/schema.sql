@@ -261,7 +261,7 @@ begin
 end;
 $$;
 
--- Remplace entièrement un repas (rôle write uniquement). Liste vide = repas vidé.
+-- Remplace entièrement un repas (rôles write et admin). Liste vide = repas vidé.
 -- Seuls les jours des 15 derniers jours à +30 jours sont modifiables.
 create or replace function food.set_meal(u text, p text, d date, s text, food_ids bigint[])
 returns void
@@ -277,7 +277,7 @@ declare
   before_names jsonb;
   after_names jsonb;
 begin
-  r := food._check(u, p, array['write']);
+  r := food._check(u, p, array['write', 'admin']);
   if slot_ not in ('midi', 'soir') then
     raise exception 'invalid_slot';
   end if;
@@ -393,7 +393,7 @@ begin
 end;
 $$;
 
--- Remplace entièrement les contraintes d'un jour (rôle write uniquement). Liste vide = aucune.
+-- Remplace entièrement les contraintes d'un jour (rôles write et admin). Liste vide = aucune.
 -- Mêmes jours modifiables que les repas : 15 derniers jours à +30 jours.
 create or replace function food.set_day_constraints(u text, p text, d date, cids bigint[])
 returns void
@@ -407,7 +407,7 @@ declare
   before_names jsonb;
   after_names jsonb;
 begin
-  r := food._check(u, p, array['write']);
+  r := food._check(u, p, array['write', 'admin']);
   if d < food._today() - 15 or d > food._today() + 30 then
     raise exception 'out_of_window';
   end if;

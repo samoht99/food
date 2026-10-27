@@ -101,7 +101,7 @@
       }
 
       case "set_day_constraints": {
-        if (role !== "write") return fail("forbidden");
+        if (role !== "write" && role !== "admin") return fail("forbidden");
         if (!inWindow(a.d)) return fail("out_of_window");
         const ids = [...new Set(a.cids || [])];
         if (ids.some((id) => !constraints.some((k) => k.id === id))) return fail("unknown_constraint");
@@ -139,7 +139,7 @@
       }
 
       case "set_meal": {
-        if (role !== "write") return fail("forbidden");
+        if (role !== "write" && role !== "admin") return fail("forbidden");
         if (!["midi", "soir"].includes(a.s)) return fail("invalid_slot");
         if (!inWindow(a.d)) return fail("out_of_window");
         const ids = [...new Set(a.food_ids)];

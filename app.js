@@ -303,7 +303,7 @@ function renderHome() {
 function renderMeals() {
   const root = $("tab-meals");
   root.replaceChildren();
-  const editable = role === "write";
+  const editable = role === "write" || role === "admin"; // l'admin a aussi les droits d'écriture sur les repas et les contraintes de jour
   for (let i = -DAYS_BEFORE; i <= DAYS_AFTER; i++) root.append(dayCard(addDays(today, i), editable));
 }
 

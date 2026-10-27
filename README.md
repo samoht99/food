@@ -2,7 +2,7 @@
 
 Petit site statique (HTML/CSS/JS) hébergé sur GitHub Pages pour planifier les repas du midi et du soir. Les données sont dans Supabase (schéma `food` du projet `family`).
 
-- On se connecte avec un identifiant et un mot de passe. Trois utilisateurs, trois modes : `reader` (**Read** : voir les repas), `writer` (**Write** : Read + modifier les repas), `admin` (**Admin** : Read + gérer les aliments, pas de modification des repas).
+- On se connecte avec un identifiant et un mot de passe. Trois utilisateurs, trois modes : `reader` (**Read** : voir les repas), `writer` (**Write** : Read + modifier les repas), `admin` (**Admin** : Read + Write + gestion des aliments et des contraintes dans l'onglet Admin). L'admin peut donc tout faire depuis une seule connexion, sans changer d'utilisateur.
 - Les specs sont dans [`specs/`](specs/) (une version par fichier, la plus récente fait foi).
 
 ## Comment ça marche
@@ -93,7 +93,7 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
 
 ## Journal d'audit
 
-Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear`, `day_constraint_create`, `day_constraint_update`, `day_constraint_clear` (rôle write), `food_add`, `food_update`, `food_delete`, `constraint_add`, `constraint_update`, `constraint_delete` (rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments ou de contraintes).
+Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear`, `day_constraint_create`, `day_constraint_update`, `day_constraint_clear` (rôles write et admin), `food_add`, `food_update`, `food_delete`, `constraint_add`, `constraint_update`, `constraint_delete` (rôle admin). Le rôle de l'utilisateur qui a fait l'action est enregistré (un repas modifié par `admin` est consigné avec le rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments ou de contraintes).
 
 Ne sont **pas** consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien, la suppression automatique des vieux repas et contraintes de jour et tout ce qui est fait directement en SQL. Les lignes de plus de 12 mois sont supprimées automatiquement (en même temps que les vieux repas, à chaque enregistrement de repas).
 
