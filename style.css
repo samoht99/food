@@ -136,6 +136,9 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .class-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 2px 6px; }
 .class-check { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; cursor: pointer; }
 .class-check input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+/* Contraintes d'un jour : une case à cocher par ligne, l'une sous l'autre. */
+#day-checks .class-checks { flex-direction: column; flex-wrap: nowrap; gap: 12px; padding: 4px 6px; }
+#day-checks .class-check { font-size: 1rem; }
 .form-grid .form-label { align-self: start; padding-top: 8px; }
 .food-row .fname small.fmeta { display: block; color: var(--ink-soft); font-size: .78rem; margin-top: 2px; }
 .search { width: 100%; margin-bottom: 8px; }
