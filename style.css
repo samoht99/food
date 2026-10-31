@@ -302,3 +302,8 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
   .ing-name { flex-basis: 100%; }
   .ing-qty { width: 72px; }
 }
+
+/* Quantités et portions : les boutons − / + remplacent les flèches natives du champ numérique. */
+.ing-qty, .portion-input { appearance: textfield; -moz-appearance: textfield; }
+.ing-qty::-webkit-outer-spin-button, .ing-qty::-webkit-inner-spin-button,
+.portion-input::-webkit-outer-spin-button, .portion-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
