@@ -90,6 +90,9 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .segment { display: flex; gap: 6px; margin: 6px 0 12px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; }
 .seg { flex: 1; padding: 8px 0; border: 0; border-radius: 999px; background: transparent; color: var(--ink-soft); cursor: pointer; }
 .seg.on { background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
+/* Filtre d'utilisation (Tous | Utilisés | Non utilisés) au-dessus des listes Admin. */
+.segment.mini { margin: 0 0 10px; padding: 3px; }
+.segment.mini .seg { padding: 5px 0; font-size: .85rem; }
 .tag-input {
   width: 100%; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff;
 }
@@ -132,6 +135,9 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
   border: 1px solid var(--line); background: #fff;
 }
 .add-form { margin-bottom: 8px; }
+/* Ingrédients d'une recette (visibles seulement quand la case Recettes est cochée). */
+.ing-box { margin-top: 8px; }
+.ing-label { display: block; font-size: .85rem; color: var(--ink-soft); margin: 0 0 4px 6px; }
 .add-form .add-row { margin-bottom: 6px; }
 .class-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 2px 6px; }
 .class-check { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; cursor: pointer; }
@@ -167,7 +173,7 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .confirm-detail { margin: 0 0 6px; color: var(--ink-soft); font-size: .9rem; overflow-wrap: anywhere; }
 .confirm-detail:empty { display: none; }
 
-.form-grid { display: grid; grid-template-columns: 70px 1fr; gap: 10px; align-items: center; margin-top: 12px; }
+.form-grid { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-top: 12px; }
 
 .meal-dialog { max-height: calc(100dvh - 24px); overflow-y: auto; }
 .copy-row { margin: 10px 0 12px; }

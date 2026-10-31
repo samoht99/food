@@ -5,12 +5,15 @@
   try { localStorage.removeItem("food_session"); sessionStorage.removeItem("food_session"); } catch {}
 
   const classes = [
-    { id: 1, name: "Protéines", part_name: "protéine" },
-    { id: 2, name: "Féculents", part_name: "féculent" },
-    { id: 3, name: "Légumes", part_name: "légume" },
-    { id: 4, name: "Laitages", part_name: "laitage" },
-    { id: 5, name: "Autres", part_name: "divers" },
+    { id: 1, name: "Protéines", part_name: "protéine", type: "composante" },
+    { id: 2, name: "Féculents", part_name: "féculent", type: "composante" },
+    { id: 3, name: "Légumes", part_name: "légume", type: "composante" },
+    { id: 4, name: "Laitages", part_name: "laitage", type: "composante" },
+    { id: 5, name: "Autres", part_name: "divers", type: "composante" },
+    { id: 6, name: "Recettes", part_name: null, type: "combo" }, // pas de partie de repas
   ];
+  const typeOf = (cid) => classes.find((c) => c.id === cid).type;
+  const isRecipe = (cids) => cids.some((c) => typeOf(c) === "combo");
   const seed = {
     1: ["poulet", "poisson", "oeuf", "boeuf haché", "jambon"],
     2: ["riz", "pâtes", "pomme de terre", "polenta", "quinoa"],
@@ -21,9 +24,34 @@
   let nextId = 1;
   let foods = [];
   for (const cid in seed) for (const name of seed[cid]) foods.push({ id: nextId++, name, class_ids: [Number(cid)] });
-  foods.push({ id: nextId++, name: "sandwich jambon-salade", class_ids: [1, 2, 3] });
+  foods.push({ id: nextId++, name: "sandwich jambon-salade", class_ids: [1, 2, 3, 6] }); // recette
   foods.push({ id: nextId++, name: "pizza", class_ids: [1, 2, 4] });
+  foods.push({ id: nextId++, name: "lasagnes", class_ids: [1, 2, 6] }); // recette
   const byName = (n) => foods.find((f) => f.name === n).id;
+
+  // Ingrédients : un aliment simple a un ingrédient de même nom ; une recette a ceux qu'on lui donne.
+  let nextIngId = 1;
+  let ingredients = []; // [{ id, name }]
+  const foodIngs = new Map(); // id d'aliment -> [ids d'ingrédients]
+  const ingredientId = (name) => {
+    let i = ingredients.find((x) => x.name === name);
+    if (!i) { i = { id: nextIngId++, name }; ingredients.push(i); }
+    return i.id;
+  };
+  const setIngredients = (fid, names) => foodIngs.set(fid, names.map(ingredientId));
+  const ingName = (id) => ingredients.find((i) => i.id === id).name;
+  const recipeSeed = {
+    "sandwich jambon-salade": ["pain", "jambon", "salade", "tomate"],
+    lasagnes: ["pâtes à lasagne", "boeuf haché", "sauce tomate", "béchamel"],
+  };
+  for (const f of foods) setIngredients(f.id, isRecipe(f.class_ids) ? recipeSeed[f.name] : [f.name]);
+  ingredientId("basilic"); // ingrédient inutilisé (pour essayer le filtre)
+  // Noms d'ingrédients saisis : minuscules, sans vide ni doublon ; null si l'un dépasse 60 caractères.
+  const cleanIngs = (arr) => {
+    const names = [...new Set((arr || []).map(clean).filter(Boolean))].sort();
+    return names.some((n) => n.length > 60) ? null : names;
+  };
+  const usedIn = (fid) => [...meals.values()].filter((ids) => ids.includes(fid)).length;
 
   const meals = new Map(); // "date|slot" -> [food ids]
   let nextConId = 1;
@@ -71,7 +99,16 @@
 
     switch (fn) {
       case "get_catalog":
-        return ok({ classes, foods: [...foods].sort((x, y) => x.name.localeCompare(y.name)) });
+        return ok({
+          classes,
+          foods: [...foods].sort((x, y) => x.name.localeCompare(y.name)).map((f) => ({
+            id: f.id,
+            name: f.name,
+            class_ids: [...f.class_ids].sort((x, y) => x - y),
+            uses: usedIn(f.id),
+            ingredients: isRecipe(f.class_ids) ? (foodIngs.get(f.id) || []).map(ingName).sort() : [],
+          })),
+        });
 
       case "get_meals": {
         const rows = [];
@@ -80,7 +117,9 @@
           if (d < a.d_from || d > a.d_to) continue;
           for (const id of ids) {
             const f = foods.find((x) => x.id === id);
-            rows.push({ meal_date: d, slot: s, food_id: id, food_name: f.name, class_ids: [...f.class_ids].sort((x, y) => x - y) });
+            // Seules les classes de type composante sont renvoyées (les classes combo ne s'affichent jamais dans les repas).
+            const cids = f.class_ids.filter((c) => typeOf(c) === "composante").sort((x, y) => x - y);
+            rows.push({ meal_date: d, slot: s, food_id: id, food_name: f.name, class_ids: cids });
           }
         }
         return ok(rows);
@@ -156,9 +195,19 @@
         const cids = [...new Set(a.cids || [])].sort((x, y) => x - y);
         if (!cids.length) return fail("invalid_classes");
         if (cids.some((c) => !classes.some((k) => k.id === c))) return fail("unknown_class");
+        if (!cids.some((c) => typeOf(c) === "composante")) return fail("class_component_required");
+        // Recette : ingrédients saisis (au moins 1). Aliment simple : un ingrédient de même nom, automatique.
+        let names = [name];
+        if (isRecipe(cids)) {
+          names = cleanIngs(a.ings);
+          if (!names) return fail("invalid_name");
+          if (!names.length) return fail("ingredients_required");
+        }
         if (foods.some((f) => f.name === name)) return fail("food_exists");
-        foods.push({ id: nextId++, name, class_ids: cids });
-        return ok(nextId - 1);
+        const created = { id: nextId++, name, class_ids: cids };
+        foods.push(created);
+        setIngredients(created.id, names);
+        return ok(created.id);
       }
 
       case "update_food": {
@@ -170,12 +219,21 @@
         const cids = [...new Set(a.cids || [])].sort((x, y) => x - y);
         if (!cids.length) return fail("invalid_classes");
         if (cids.some((c) => !classes.some((k) => k.id === c))) return fail("unknown_class");
+        if (!cids.some((c) => typeOf(c) === "composante")) return fail("class_component_required");
+        let names = [name];
+        if (isRecipe(cids)) {
+          names = cleanIngs(a.ings);
+          if (!names) return fail("invalid_name");
+          if (!names.length) return fail("ingredients_required");
+        }
         if (foods.some((x) => x.name === name && x.id !== a.fid)) return fail("food_exists");
         const used = [...meals.values()].some((ids) => ids.includes(a.fid));
-        // On peut ajouter des classes à un aliment utilisé, pas en retirer.
-        if (used && f.class_ids.some((c) => !cids.includes(c))) return fail("food_in_use_class");
+        // On peut ajouter des classes de type composante à un aliment utilisé, pas en retirer
+        // (la classe Recettes, de type combo, peut être ajoutée ou retirée librement).
+        if (used && f.class_ids.some((c) => typeOf(c) === "composante" && !cids.includes(c))) return fail("food_in_use_class");
         f.name = name;
         f.class_ids = cids;
+        setIngredients(f.id, names);
         return voidOk();
       }
 
@@ -184,6 +242,47 @@
         const n = [...meals.values()].filter((ids) => ids.includes(a.fid)).length;
         if (n) return fail("food_in_use", String(n));
         foods = foods.filter((f) => f.id !== a.fid);
+        foodIngs.delete(a.fid); // ses ingrédients restent en base (aucun nettoyage automatique)
+        return voidOk();
+      }
+
+      case "get_ingredients": {
+        if (role !== "admin") return fail("forbidden");
+        return ok([...ingredients]
+          .sort((x, y) => x.name.localeCompare(y.name, "fr"))
+          .map((i) => ({ id: i.id, name: i.name, uses: [...foodIngs.values()].filter((ids) => ids.includes(i.id)).length })));
+      }
+
+      case "add_ingredient": {
+        if (role !== "admin") return fail("forbidden");
+        const name = clean(a.n);
+        if (!name || name.length > 60) return fail("invalid_name");
+        if (ingredients.some((i) => i.name === name)) return fail("ingredient_exists");
+        return ok(ingredientId(name));
+      }
+
+      case "update_ingredient": {
+        if (role !== "admin") return fail("forbidden");
+        const name = clean(a.n);
+        const i = ingredients.find((x) => x.id === a.iid);
+        if (!name || name.length > 60) return fail("invalid_name");
+        if (!i) return fail("unknown_ingredient");
+        if (ingredients.some((x) => x.id !== a.iid && x.name === name)) return fail("ingredient_exists");
+        if (name !== i.name) {
+          // L'ingrédient d'un aliment simple doit garder le nom de son aliment.
+          const ofSimpleFood = [...foodIngs].some(([fid, ids]) =>
+            ids.includes(a.iid) && !isRecipe(foods.find((f) => f.id === fid).class_ids));
+          if (ofSimpleFood) return fail("ingredient_of_simple_food");
+          i.name = name;
+        }
+        return voidOk();
+      }
+
+      case "delete_ingredient": {
+        if (role !== "admin") return fail("forbidden");
+        const n = [...foodIngs.values()].filter((ids) => ids.includes(a.iid)).length;
+        if (n) return fail("ingredient_in_use", String(n));
+        ingredients = ingredients.filter((i) => i.id !== a.iid);
         return voidOk();
       }
     }
