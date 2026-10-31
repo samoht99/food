@@ -187,7 +187,12 @@ async function loadCatalog() {
   const cat = await rpc("get_catalog", auth());
   classes = cat.classes;
   units = cat.units || [];
-  foods = cat.foods;
+  // Avant la migration des quantités (v2-3), les ingrédients d'une recette sont de simples noms : on les
+  // convertit au nouveau format (quantité non définie, sans unité).
+  foods = cat.foods.map((f) => ({
+    ...f,
+    ingredients: (f.ingredients || []).map((i) => (typeof i === "string" ? { name: i, quantity: null, unit_id: undefined } : i)),
+  }));
   if (!classes.some((c) => c.id === adminClassId)) adminClassId = classes[0] ? classes[0].id : null;
 }
 
@@ -742,7 +747,7 @@ function renderPortions() {
   for (const id of chosen.keys()) if (!portions.has(id)) portions.set(id, 1);
   const box = $("meal-portions");
   box.replaceChildren();
-  if (!chosen.size) return;
+  if (!chosen.size || !units.length) return; // sans unités, la base ne gère pas encore les portions
   box.append(el("h3", "portions-title", "Portions"));
   const names = [...chosen.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
   for (const f of names) {
@@ -878,7 +883,8 @@ mealSave.addEventListener("click", async () => {
 async function saveMeal(date, slot, ids, portions, errorTarget, btn) {
   if (btn) btn.disabled = true;
   try {
-    await rpc("set_meal", { ...auth(), d: date, s: slot, food_ids: ids, portions });
+    // Les portions ne sont envoyées que si la base les gère (migration v2-3 faite : les unités existent).
+    await rpc("set_meal", { ...auth(), d: date, s: slot, food_ids: ids, ...(units.length ? { portions } : {}) });
     if (mealDialog.open) mealDialog.close();
     statusEl.textContent = "";
     await reloadMeals();
@@ -1117,6 +1123,10 @@ function unitSelect(selected) {
 
 // Paramètre « unité » des appels (omis tant que la base n'a pas les unités).
 const unitArg = (uid) => (units.length ? { uid } : {});
+
+// Ingrédients envoyés pour un aliment : lignes { name, quantity, unit_id }, ou de simples noms tant que la base
+// n'a pas les quantités (ancien format).
+const ingsArg = (ings) => (units.length ? ings : ings.map((i) => i.name));
 
 function renderIngredientsAdmin(root) {
   // Nouvel ingrédient : un popup (le même que pour la modification) avec un nom et une unité.
@@ -1464,8 +1474,8 @@ $("food-edit-save").addEventListener("click", async () => {
   const btn = $("food-edit-save");
   btn.disabled = true;
   try {
-    if (editingFood) await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids, ings });
-    else await rpc("add_food", { ...auth(), n: name, cids, ings });
+    if (editingFood) await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids, ings: ingsArg(ings) });
+    else await rpc("add_food", { ...auth(), n: name, cids, ings: ingsArg(ings) });
     foodDialog.close();
     statusEl.textContent = "";
     await loadAll();
