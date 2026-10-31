@@ -819,7 +819,8 @@ function renderFoodsAdmin(root) {
       const name = el("span", "fname", f.name);
       const others = f.class_ids.filter((id) => id !== adminClassId)
         .map((id) => (classes.find((c) => c.id === id) || {}).name).filter(Boolean);
-      if (others.length) name.append(el("small", "fmeta", `aussi : ${others.join(", ")}`));
+      // Les autres classes de l'aliment : des pastilles à droite du nom.
+      for (const cname of others) name.append(el("span", "cls-pill", cname));
       const uses = Number(f.uses) || 0;
       name.append(el("small", "fmeta", uses ? `utilisé dans ${uses} repas` : "non utilisé"));
       li.append(name);
