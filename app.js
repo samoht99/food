@@ -64,11 +64,13 @@ let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_ids }]
 // Contraintes de jour : texte informatif affiché sur un jour, sans effet sur le comportement du site.
 let constraints = []; // [{ id, name, uses }] : liste des contraintes possibles (gérée par l'admin)
 let dayConstraints = new Map(); // "2026-10-27" -> [ids de contraintes]
-let adminSection = "foods"; // onglet Admin : "foods" | "constraints"
+let ingredients = []; // [{ id, name, uses }] : liste des ingrédients (admin uniquement)
+let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constraints"
 let currentTab = "home";
 let today = "";
 let adminClassId = null;
 let adminSearch = "";
+let adminUsage = "all"; // filtre d'utilisation des listes Admin : "all" | "used" | "unused"
 
 // ------------------------------------------------------------------ Réseau
 async function rpc(name, args) {
@@ -103,6 +105,13 @@ function errorText(e) {
     case "food_in_use_class":
       return "Cet aliment est utilisé dans des repas : vous pouvez lui ajouter des classes, mais pas en retirer.";
     case "invalid_classes": return "Choisissez au moins une classe.";
+    case "class_component_required": return "Choisissez au moins une classe d'aliment autre que Recettes.";
+    case "ingredients_required": return "Une recette doit avoir au moins un ingrédient.";
+    case "ingredient_exists": return "Cet ingrédient existe déjà.";
+    case "ingredient_in_use":
+      return `Cet ingrédient est utilisé par ${e.details || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`;
+    case "ingredient_of_simple_food": return "Cet ingrédient est celui d'un aliment simple : renommez plutôt l'aliment.";
+    case "unknown_ingredient": return "Un ingrédient sélectionné n'existe plus. Rechargez la page.";
     case "unknown_class": return "Une classe sélectionnée n'existe plus. Rechargez la page.";
     case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
     case "constraint_exists": return "Cette contrainte existe déjà.";
@@ -160,6 +169,14 @@ async function loadConstraints() {
   constraints = await optional(rpc("get_constraints", auth()));
 }
 
+// Les ingrédients ne concernent que l'admin (liste de l'onglet Admin, suggestions des recettes).
+async function loadIngredients() {
+  ingredients = role === "admin" ? await optional(rpc("get_ingredients", auth())) : [];
+}
+
+// Aliments et ingrédients vont ensemble : une recette crée des ingrédients, un aliment simple aussi.
+const loadFoodsAndIngredients = () => Promise.all([loadCatalog(), loadIngredients()]);
+
 async function loadMeals() {
   today = zurichToday();
   const range = { d_from: addDays(today, -DAYS_BEFORE), d_to: addDays(today, DAYS_AFTER) };
@@ -182,7 +199,7 @@ async function loadMeals() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadCatalog(), loadConstraints(), loadMeals()]);
+    await Promise.all([loadCatalog(), loadConstraints(), loadMeals(), loadIngredients()]);
     statusEl.textContent = "";
     render();
   } catch (e) {
@@ -191,10 +208,12 @@ async function loadAll() {
 }
 
 async function reloadMeals() {
-  await loadMeals();
+  // L'indication d'utilisation de l'onglet Admin (aliments, contraintes) dépend des repas et des jours.
+  await Promise.all([loadMeals(), role === "admin" ? Promise.all([loadCatalog(), loadConstraints()]) : null]);
   const y = window.scrollY;
   renderHome();
   renderMeals();
+  renderAdmin();
   window.scrollTo(0, y);
   updateTodayBtn();
 }
@@ -374,7 +393,9 @@ function confirmAction(title, detail = "") {
 // `chosen` (Map id -> aliment) est partagé entre tous les champs du popup : un aliment multi-classes
 // choisi dans un champ apparaît aussi dans ses autres classes, et l'enlever l'enlève partout.
 // `onChange` rafraîchit tous les champs.
-function createPicker(options, chosen, onChange) {
+// Avec `allowNew` (ingrédients d'une recette), on peut aussi saisir un nom qui n'est pas dans la liste
+// (« Créer « nom » ») : `chosen` est alors indexé par le nom, et sert de source des cadres affichés.
+function createPicker(options, chosen, onChange, { allowNew = false, none = "Aucun aliment", empty = "Aucun aliment dans cette classe" } = {}) {
   const root = el("div", "picker");
   const field = el("div", "picker-field");
   const input = el("input");
@@ -386,9 +407,11 @@ function createPicker(options, chosen, onChange) {
   let active = -1;
   let shown = [];
 
+  const current = () => (allowNew ? [...chosen.values()] : options.filter((f) => chosen.has(f.id)));
+
   function renderTags() {
     field.querySelectorAll(".tag").forEach((t) => t.remove());
-    const mine = options.filter((f) => chosen.has(f.id));
+    const mine = current();
     for (const f of mine) {
       const tag = el("span", "tag", f.name);
       const x = button("", "×", () => { chosen.delete(f.id); onChange(); });
@@ -402,14 +425,18 @@ function createPicker(options, chosen, onChange) {
   function renderList() {
     const q = input.value.trim().toLowerCase();
     shown = options.filter((o) => !chosen.has(o.id) && o.name.includes(q));
-    active = shown.length && q ? 0 : -1;
+    if (allowNew && q && q.length <= 60 && !chosen.has(q) && !options.some((o) => o.id === q)) {
+      shown.push({ id: q, name: q, isNew: true });
+    }
+    // Avec saisie libre, le nom tapé tel quel (existant ou à créer) est présélectionné.
+    active = shown.length && q ? (allowNew ? shown.findIndex((o) => o.id === q) : 0) : -1;
     list.replaceChildren();
     if (!shown.length) {
-      list.append(el("li", "none", options.length ? "Aucun aliment" : "Aucun aliment dans cette classe"));
+      list.append(el("li", "none", options.length ? none : empty));
       return;
     }
     shown.forEach((o, i) => {
-      const li = el("li", i === active ? "act" : "", o.name);
+      const li = el("li", i === active ? "act" : "", o.isNew ? `Créer « ${o.name} »` : o.name);
       li.addEventListener("pointerdown", (e) => e.preventDefault()); // garde le focus dans le champ
       li.addEventListener("click", () => pick(o));
       list.append(li);
@@ -439,7 +466,7 @@ function createPicker(options, chosen, onChange) {
     else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
     else if (e.key === "Enter") { e.preventDefault(); if (shown[active]) pick(shown[active]); }
     else if (e.key === "Backspace" && !input.value) {
-      const mine = options.filter((f) => chosen.has(f.id));
+      const mine = current();
       if (mine.length) { chosen.delete(mine[mine.length - 1].id); onChange(); }
     }
   });
@@ -447,7 +474,31 @@ function createPicker(options, chosen, onChange) {
   field.append(input);
   root.append(field, list);
   renderTags();
-  return { el: root, refresh() { renderTags(); renderList(); } };
+  return {
+    el: root,
+    refresh() { renderTags(); renderList(); },
+    // Texte tapé mais pas encore validé (pour ne pas le perdre si on clique directement sur « Enregistrer »).
+    pending() { return input.value.trim().toLowerCase(); },
+  };
+}
+
+// Champ « Ingrédients » d'une recette : cadres avec croix, suggestions = ingrédients existants,
+// et saisie libre pour en créer un nouveau. field.names() renvoie les noms choisis.
+function ingredientField(initial) {
+  const chosen = new Map(initial.map((n) => [n, { id: n, name: n }]));
+  const options = ingredients.map((i) => ({ id: i.name, name: i.name }));
+  const picker = createPicker(options, chosen, () => picker.refresh(), {
+    allowNew: true, none: "Aucun ingrédient", empty: "Tapez le nom d'un ingrédient",
+  });
+  const root = el("div", "ing-field");
+  root.append(picker.el);
+  root.names = () => {
+    const names = [...chosen.keys()];
+    const typed = picker.pending();
+    if (typed && !names.includes(typed)) names.push(typed);
+    return names;
+  };
+  return root;
 }
 
 // ------------------------------------------------------------ Édition repas
@@ -463,7 +514,8 @@ function openMeal(date, slot) {
   rows.replaceChildren();
   const pickers = [];
   const refreshAll = () => pickers.forEach((p) => p.refresh());
-  for (const c of classes) {
+  // Seules les classes de type composante ont une partie de repas (pas les classes combo, comme Recettes).
+  for (const c of classes.filter((k) => k.type === "composante")) {
     const options = foods.filter((f) => f.class_ids.includes(c.id));
     const picker = createPicker(options, chosen, refreshAll);
     pickers.push(picker);
@@ -641,20 +693,49 @@ function classChecks(selected) {
   return checkBoxes(classes, selected);
 }
 
+// Une recette est un aliment qui a une classe de type combo (Recettes).
+const isRecipe = (cids) => cids.some((id) => (classes.find((c) => c.id === id) || {}).type === "combo");
+
+// Contrôle fait avant l'envoi (la base refait les mêmes contrôles) : renvoie un code d'erreur ou null.
+function foodFormError(cids, ings) {
+  if (!cids.length) return "invalid_classes";
+  if (!cids.some((id) => (classes.find((c) => c.id === id) || {}).type === "composante")) return "class_component_required";
+  if (isRecipe(cids) && !ings.length) return "ingredients_required";
+  return null;
+}
+
+// Filtre d'utilisation (Tous | Utilisés | Non utilisés) des listes Admin ; il se combine avec la recherche.
+function usageFilter(onChange) {
+  const seg = el("div", "segment mini");
+  for (const [key, label] of [["all", "Tous"], ["used", "Utilisés"], ["unused", "Non utilisés"]]) {
+    const b = button("seg" + (adminUsage === key ? " on" : ""), label, () => {
+      adminUsage = key;
+      for (const x of seg.children) x.classList.toggle("on", x === b);
+      onChange();
+    });
+    seg.append(b);
+  }
+  return seg;
+}
+
+const matchesUsage = (uses) => adminUsage === "all" || (adminUsage === "used") === (Number(uses) > 0);
+
 function renderAdmin() {
   const root = $("tab-admin");
   if (role !== "admin") { root.replaceChildren(); return; }
   root.replaceChildren();
   const seg = el("div", "segment");
-  for (const [key, label] of [["foods", "Aliments"], ["constraints", "Contraintes"]]) {
+  for (const [key, label] of [["foods", "Aliments"], ["ingredients", "Ingrédients"], ["constraints", "Contraintes"]]) {
     seg.append(button("seg" + (adminSection === key ? " on" : ""), label, () => {
       adminSection = key;
       adminSearch = "";
+      adminUsage = "all";
       renderAdmin();
     }));
   }
   root.append(seg);
   if (adminSection === "constraints") renderConstraintsAdmin(root);
+  else if (adminSection === "ingredients") renderIngredientsAdmin(root);
   else renderFoodsAdmin(root);
 }
 
@@ -682,18 +763,27 @@ function renderFoodsAdmin(root) {
   addBtn.type = "submit";
   addRow.append(addInput, addBtn);
   const addChecks = classChecks(new Set([adminClassId]));
-  addForm.append(addRow, addChecks);
+  // Les ingrédients ne sont demandés que pour une recette (case Recettes cochée).
+  const addIngredients = ingredientField([]);
+  const addIngBox = el("div", "ing-box");
+  addIngBox.append(el("span", "ing-label", "Ingrédients de la recette"), addIngredients);
+  const toggleIngredients = () => { addIngBox.hidden = !isRecipe(addChecks.values()); };
+  addChecks.addEventListener("change", toggleIngredients);
+  toggleIngredients();
+  addForm.append(addRow, addChecks, addIngBox);
   addForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = addInput.value.trim().toLowerCase();
     if (!name) return;
     const cids = addChecks.values();
-    if (!cids.length) { statusEl.textContent = errorText({ code: "invalid_classes" }); return; }
+    const ings = isRecipe(cids) ? addIngredients.names() : [];
+    const problem = foodFormError(cids, ings);
+    if (problem) { statusEl.textContent = errorText({ code: problem }); return; }
     addBtn.disabled = true;
     try {
-      await rpc("add_food", { ...auth(), n: name, cids });
+      await rpc("add_food", { ...auth(), n: name, cids, ings });
       statusEl.textContent = "";
-      await loadCatalog();
+      await loadFoodsAndIngredients();
       renderAdmin();
       $("tab-admin").querySelector(".add-row input").focus();
       return;
@@ -711,15 +801,16 @@ function renderFoodsAdmin(root) {
   root.append(search);
 
   const list = el("ul", "food-list");
-  root.append(list);
+  const filter = usageFilter(() => fill());
+  root.append(filter, list);
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
     const rows = foods
-      .filter((f) => f.class_ids.includes(adminClassId) && f.name.includes(q))
+      .filter((f) => f.class_ids.includes(adminClassId) && f.name.includes(q) && matchesUsage(f.uses))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
     list.replaceChildren();
     if (!rows.length) {
-      const li = el("li", "empty", q ? "Aucun résultat" : "Aucun aliment dans cette classe");
+      const li = el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucun aliment dans cette classe");
       list.append(li);
       return;
     }
@@ -729,6 +820,8 @@ function renderFoodsAdmin(root) {
       const others = f.class_ids.filter((id) => id !== adminClassId)
         .map((id) => (classes.find((c) => c.id === id) || {}).name).filter(Boolean);
       if (others.length) name.append(el("small", "fmeta", `aussi : ${others.join(", ")}`));
+      const uses = Number(f.uses) || 0;
+      name.append(el("small", "fmeta", uses ? `utilisé dans ${uses} repas` : "non utilisé"));
       li.append(name);
       li.append(button("btn-sm", "Modifier", () => openFoodEdit(f)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteFood(f)));
@@ -745,12 +838,127 @@ async function deleteFood(f) {
   try {
     await rpc("delete_food", { ...auth(), fid: f.id });
     statusEl.textContent = "";
-    await loadCatalog();
+    await loadFoodsAndIngredients();
     renderAdmin();
   } catch (e) {
     fail(e);
   }
 }
+
+// ------------------------------------------------- Admin : gestion des ingrédients
+function renderIngredientsAdmin(root) {
+  const addForm = el("form", "add-form");
+  const addRow = el("div", "add-row");
+  const addInput = el("input");
+  addInput.type = "text";
+  addInput.maxLength = 60;
+  addInput.placeholder = "Nouvel ingrédient";
+  addInput.autocomplete = "off";
+  const addBtn = el("button", "btn-primary", "Ajouter");
+  addBtn.type = "submit";
+  addRow.append(addInput, addBtn);
+  addForm.append(addRow);
+  addForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = addInput.value.trim().toLowerCase();
+    if (!name) return;
+    addBtn.disabled = true;
+    try {
+      await rpc("add_ingredient", { ...auth(), n: name });
+      statusEl.textContent = "";
+      await loadIngredients();
+      renderAdmin();
+      $("tab-admin").querySelector(".add-row input").focus();
+      return;
+    } catch (err) {
+      fail(err);
+    }
+    addBtn.disabled = false;
+  });
+  root.append(addForm);
+
+  const search = el("input", "search");
+  search.type = "search";
+  search.placeholder = "Rechercher";
+  search.value = adminSearch;
+  root.append(search);
+
+  const list = el("ul", "food-list");
+  const filter = usageFilter(() => fill());
+  root.append(filter, list);
+  const fill = () => {
+    const q = adminSearch.trim().toLowerCase();
+    const rows = ingredients.filter((i) => i.name.includes(q) && matchesUsage(i.uses))
+      .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    list.replaceChildren();
+    if (!rows.length) {
+      list.append(el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucun ingrédient pour le moment"));
+      return;
+    }
+    for (const i of rows) {
+      const li = el("li", "food-row");
+      const name = el("span", "fname", i.name);
+      const uses = Number(i.uses) || 0;
+      name.append(el("small", "fmeta", uses ? `utilisé par ${uses} aliment${uses > 1 ? "s" : ""}` : "non utilisé"));
+      li.append(name);
+      li.append(button("btn-sm", "Modifier", () => openIngredientEdit(i)));
+      li.append(button("btn-sm danger", "Supprimer", () => deleteIngredient(i)));
+      list.append(li);
+    }
+  };
+  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
+  fill();
+}
+
+async function deleteIngredient(i) {
+  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet ingrédient ?", i.name);
+  if (!ok) return;
+  try {
+    await rpc("delete_ingredient", { ...auth(), iid: i.id });
+    statusEl.textContent = "";
+    await loadIngredients();
+    renderAdmin();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const ingredientDialog = $("ingredient-dialog");
+const ingredientError = $("ingredient-error");
+const ingredientName = $("ingredient-name");
+let editingIngredient = null;
+
+function openIngredientEdit(i) {
+  editingIngredient = i;
+  ingredientName.value = i.name;
+  ingredientError.textContent = "";
+  ingredientDialog.showModal();
+  ingredientName.focus();
+  ingredientName.select();
+}
+
+$("ingredient-cancel").addEventListener("click", () => ingredientDialog.close());
+closeOnBackdrop(ingredientDialog);
+ingredientName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("ingredient-save").click(); }
+});
+$("ingredient-save").addEventListener("click", async () => {
+  const name = ingredientName.value.trim().toLowerCase();
+  if (!name) { ingredientError.textContent = errorText({ code: "invalid_name" }); return; }
+  if (name === editingIngredient.name) { ingredientDialog.close(); return; }
+  const btn = $("ingredient-save");
+  btn.disabled = true;
+  try {
+    await rpc("update_ingredient", { ...auth(), iid: editingIngredient.id, n: name });
+    ingredientDialog.close();
+    statusEl.textContent = "";
+    await loadFoodsAndIngredients(); // les recettes qui l'utilisent suivent
+    renderAdmin();
+  } catch (e) {
+    fail(e, ingredientError);
+  }
+  btn.disabled = false;
+});
 
 // ---------------------------------------------------- Admin : gestion des contraintes
 function renderConstraintsAdmin(root) {
@@ -791,13 +999,14 @@ function renderConstraintsAdmin(root) {
   root.append(search);
 
   const list = el("ul", "food-list");
-  root.append(list);
+  const filter = usageFilter(() => fill());
+  root.append(filter, list);
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
-    const rows = constraints.filter((k) => k.name.toLowerCase().includes(q));
+    const rows = constraints.filter((k) => k.name.toLowerCase().includes(q) && matchesUsage(k.uses));
     list.replaceChildren();
     if (!rows.length) {
-      list.append(el("li", "empty", q ? "Aucun résultat" : "Aucune contrainte pour le moment"));
+      list.append(el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucune contrainte pour le moment"));
       return;
     }
     for (const k of rows) {
@@ -869,12 +1078,23 @@ const foodDialog = $("food-dialog");
 const foodEditError = $("food-edit-error");
 let editingFood = null;
 let editChecks = null;
+let editIngredients = null;
 
 function openFoodEdit(f) {
   editingFood = f;
   $("food-edit-name").value = f.name;
   editChecks = classChecks(new Set(f.class_ids));
   $("food-edit-classes").replaceChildren(editChecks);
+  // Le champ « Ingrédients » n'apparaît que si la case Recettes est cochée.
+  editIngredients = ingredientField(f.ingredients || []);
+  $("food-edit-ingredients").replaceChildren(editIngredients);
+  const toggleIngredients = () => {
+    const on = isRecipe(editChecks.values());
+    $("food-edit-ing-label").hidden = !on;
+    $("food-edit-ingredients").hidden = !on;
+  };
+  editChecks.addEventListener("change", toggleIngredients);
+  toggleIngredients();
   foodEditError.textContent = "";
   foodDialog.showModal();
 }
@@ -885,11 +1105,13 @@ $("food-edit-save").addEventListener("click", async () => {
   const name = $("food-edit-name").value.trim().toLowerCase();
   if (!name) { foodEditError.textContent = errorText({ code: "invalid_name" }); return; }
   const cids = editChecks.values();
-  if (!cids.length) { foodEditError.textContent = errorText({ code: "invalid_classes" }); return; }
+  const ings = isRecipe(cids) ? editIngredients.names() : [];
+  const problem = foodFormError(cids, ings);
+  if (problem) { foodEditError.textContent = errorText({ code: problem }); return; }
   const btn = $("food-edit-save");
   btn.disabled = true;
   try {
-    await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids });
+    await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids, ings });
     foodDialog.close();
     statusEl.textContent = "";
     await loadAll();
@@ -941,6 +1163,7 @@ function lock() {
   role = "";
   mealDialog.open && mealDialog.close();
   foodDialog.open && foodDialog.close();
+  ingredientDialog.open && ingredientDialog.close();
   app.hidden = true;
   todayBtn.hidden = true;
   gate.hidden = false;
