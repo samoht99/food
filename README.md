@@ -48,6 +48,9 @@ Sur une base déjà installée (v1), dans Supabase (**SQL Editor**), dans cet or
 4. Dans l'onglet Admin, ouvrir chaque recette (**Modifier**) et saisir ses ingrédients (au moins 1).
 5. Exécuter `supabase/migrations/008_usage_details.sql` : quand on tente de supprimer un aliment, un ingrédient ou une contrainte utilisé(e), le site affiche la liste de ce qui l'utilise (repas, aliments ou jours).
 6. Exécuter `supabase/migrations/009_constraint_effects.sql` (effets des contraintes de jour, voir plus bas). Ensuite, dans l'onglet Admin > Contraintes, donner un effet aux contraintes voulues (par exemple « Resto midi » avec « Pas de repas le midi »).
+7. Exécuter `supabase/migrations/010_quantities_units_portions.sql` (unités, quantités des ingrédients, portions des repas). Le site fonctionne aussi avant ce script (sans unités ni portions) : on peut publier le site d'abord, puis exécuter le script, puis recharger (Ctrl+F5).
+8. Relire, adapter si besoin puis exécuter `supabase/migrations/011_units_of_existing_ingredients.sql` : il donne leur unité (pièce, ml) aux ingrédients existants qui ne se comptent pas en g. À faire avant de saisir des quantités (changer l'unité ne convertit pas les quantités déjà saisies).
+9. Dans l'onglet Admin > Aliments, saisir la quantité de base de chaque aliment (« quantité à définir » signale ceux qui manquent).
 
 ## Actions réservées au SQL
 
@@ -118,11 +121,16 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
   insert into food.effects (name, description, blocked_slot)
   values ('Pas de repas le midi', 'Aucun repas ne peut être généré pour le midi de ce jour.', 'midi');
   ```
+- **Quantités** : chaque ingrédient a une **unité** (table `food.units` : g, ml, pièce, c. à soupe, c. à café ; liste fixe, créée en SQL) et toutes ses quantités sont exprimées dans cette unité. Chaque lien aliment-ingrédient porte la **quantité pour 1 portion** de l'aliment (facultative : « non définie » tant qu'elle n'est pas saisie), y compris pour un aliment simple (son unique ingrédient, de même nom). Chaque aliment d'un repas a un nombre de **portions** (1 par défaut, 99 au plus, 2 décimales : 0,5, 0,75…) : la quantité d'un ingrédient dans un repas = quantité de base × portions. Le bouton « Ingrédients » de chaque repas déplie ces quantités. À partir de 2 ingrédients un aliment devient une recette (la classe Recettes est ajoutée). Pour créer une unité :
+
+  ```sql
+  insert into food.units (id, name, plural, position) values (6, 'tranche', 'tranches', 6);
+  ```
 - « Aujourd'hui » est calculé en heure de Zurich.
 
 ## Journal d'audit
 
-Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear`, `day_constraint_create`, `day_constraint_update`, `day_constraint_clear` (rôles write et admin), `food_add`, `food_update`, `food_delete`, `constraint_add`, `constraint_update`, `constraint_delete`, `ingredient_add`, `ingredient_update`, `ingredient_delete` (rôle admin). Le rôle de l'utilisateur qui a fait l'action est enregistré (un repas modifié par `admin` est consigné avec le rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments, de contraintes ou d'ingrédients ; pour une recette, l'état d'un aliment contient aussi la liste de ses ingrédients ; pour une contrainte, `{ name, effect }`).
+Chaque action de modification **réussie** faite depuis le site est consignée dans `food.audit_log` : `meal_create`, `meal_update`, `meal_clear`, `day_constraint_create`, `day_constraint_update`, `day_constraint_clear` (rôles write et admin), `food_add`, `food_update`, `food_delete`, `constraint_add`, `constraint_update`, `constraint_delete`, `ingredient_add`, `ingredient_update`, `ingredient_delete` (rôle admin). Le rôle de l'utilisateur qui a fait l'action est enregistré (un repas modifié par `admin` est consigné avec le rôle admin). Chaque ligne contient la date, l'identifiant, le rôle, la cible et l'état avant / après (noms d'aliments, de contraintes ou d'ingrédients ; pour une recette, l'état d'un aliment contient aussi la liste de ses ingrédients ; pour une contrainte, `{ name, effect }` ; pour un ingrédient, `{ name, unit }` ; l'état d'un aliment contient ses ingrédients avec leurs quantités ; dans un repas, un aliment dont les portions ne valent pas 1 est écrit avec son multiplicateur).
 
 Ne sont **pas** consignés : les consultations, les connexions, les actions refusées, un enregistrement qui ne change rien, la suppression automatique des vieux repas et contraintes de jour et tout ce qui est fait directement en SQL. Les lignes de plus de 12 mois sont supprimées automatiquement (en même temps que les vieux repas, à chaque enregistrement de repas).
 

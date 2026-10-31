@@ -52,20 +52,34 @@ create table if not exists food.food_classes (
 );
 create index if not exists food_classes_class_idx on food.food_classes (class_id);
 
--- Ingrédients : un nom unique, en minuscules. Aucun nettoyage automatique : un ingrédient lié à
--- aucun aliment reste en base jusqu'à ce que l'admin le supprime.
-create table if not exists food.ingredients (
-  id   bigint generated always as identity primary key,
-  name text   not null unique
-       check (name = lower(name) and name = btrim(name) and name <> '' and char_length(name) <= 60)
+-- Unités des ingrédients. Liste fixe, créée / modifiée uniquement en SQL (jamais depuis le site).
+-- id explicite : l'unité par défaut (g) vaut 1. name : singulier ; plural : pluriel (à partir de 2).
+create table if not exists food.units (
+  id       smallint primary key,
+  name     text     not null unique check (name = btrim(name) and name <> ''),
+  plural   text     not null check (plural = btrim(plural) and plural <> ''),
+  position smallint not null default 0
 );
+
+-- Ingrédients : un nom unique, en minuscules, et une unité (g par défaut) dans laquelle toutes ses
+-- quantités sont exprimées. Aucun nettoyage automatique : un ingrédient lié à aucun aliment reste en
+-- base jusqu'à ce que l'admin le supprime.
+create table if not exists food.ingredients (
+  id      bigint generated always as identity primary key,
+  name    text     not null unique
+          check (name = lower(name) and name = btrim(name) and name <> '' and char_length(name) <= 60),
+  unit_id smallint not null default 1 references food.units (id) on delete restrict
+);
+create index if not exists ingredients_unit_idx on food.ingredients (unit_id);
 
 -- Ingrédients d'un aliment. Un aliment simple (sans classe combo) a exactement un ingrédient, de
 -- même nom que lui, créé par les fonctions. Une recette (classe Recettes) a au moins un ingrédient,
--- saisis par l'admin.
+-- saisis par l'admin. quantity : quantité d'ingrédient pour 1 portion de l'aliment, dans l'unité de
+-- l'ingrédient (null : non définie).
 create table if not exists food.food_ingredients (
   food_id       bigint not null references food.foods (id) on delete cascade,
   ingredient_id bigint not null references food.ingredients (id) on delete restrict,
+  quantity      numeric(8, 3) check (quantity > 0),
   primary key (food_id, ingredient_id)
 );
 create index if not exists food_ingredients_ingredient_idx on food.food_ingredients (ingredient_id);
@@ -80,9 +94,12 @@ create table if not exists food.meals (
 
 -- Aliments d'un repas. Les parties du repas qu'un aliment remplit se déduisent de ses
 -- classes : un aliment ne peut donc jamais se retrouver dans une mauvaise partie.
+-- portions : nombre de portions de l'aliment dans ce repas (multiplicateur des quantités de base de
+-- ses ingrédients) ; 1 par défaut, 99 au plus, 2 décimales au plus.
 create table if not exists food.meal_items (
-  meal_id bigint not null references food.meals (id) on delete cascade,
-  food_id bigint not null references food.foods (id) on delete restrict,
+  meal_id  bigint        not null references food.meals (id) on delete cascade,
+  food_id  bigint        not null references food.foods (id) on delete restrict,
+  portions numeric(4, 2) not null default 1 check (portions > 0 and portions <= 99),
   primary key (meal_id, food_id)
 );
 create index if not exists meal_items_food_idx on food.meal_items (food_id);
@@ -125,8 +142,9 @@ create index if not exists day_constraints_constraint_idx on food.day_constraint
 -- target : "2026-10-28 soir" pour un repas, nom de l'aliment ou de la contrainte, "2026-10-28"
 -- pour les contraintes d'un jour.
 -- before / after : liste des noms d'aliments (repas), { name, classes: [noms] } (aliment),
--- nom (ingrédient), { name, effect } (contrainte) ou liste des noms de contraintes (contraintes d'un jour).
--- Pour une recette, l'état d'un aliment contient en plus ingredients: [noms].
+-- { name, unit } (ingrédient), { name, effect } (contrainte) ou liste des noms de contraintes (contraintes
+-- d'un jour). L'état d'un aliment contient en plus ingredients: [{ name, quantity, unit }]. Dans un repas,
+-- un aliment dont les portions ne valent pas 1 est écrit avec son multiplicateur (« poulet ×1.5 »).
 create table if not exists food.audit_log (
   id      bigint generated always as identity primary key,
   logged_at timestamptz not null default now(),
@@ -152,6 +170,14 @@ insert into food.classes (name, part_name, position, type) values
   ('Recettes',  null,       6, 'combo')
 on conflict do nothing;
 
+insert into food.units (id, name, plural, position) values
+  (1, 'g',          'g',          1),
+  (2, 'ml',         'ml',         2),
+  (3, 'pièce',      'pièces',     3),
+  (4, 'c. à soupe', 'c. à soupe', 4),
+  (5, 'c. à café',  'c. à café',  5)
+on conflict (id) do nothing;
+
 insert into food.effects (name, description, blocked_slot) values
   ('Pas de repas le midi', 'Aucun repas ne peut être généré pour le midi de ce jour.', 'midi'),
   ('Pas de repas le soir', 'Aucun repas ne peut être généré pour le soir de ce jour.', 'soir')
@@ -169,12 +195,13 @@ alter table food.meal_items   enable row level security;
 alter table food.constraints     enable row level security;
 alter table food.day_constraints enable row level security;
 alter table food.effects          enable row level security;
+alter table food.units            enable row level security;
 alter table food.ingredients      enable row level security;
 alter table food.food_ingredients enable row level security;
 alter table food.audit_log    enable row level security;
 revoke all on food.users, food.classes, food.foods, food.food_classes, food.meals,
   food.meal_items, food.constraints, food.day_constraints, food.ingredients, food.food_ingredients,
-  food.effects, food.audit_log from anon, authenticated;
+  food.effects, food.units, food.audit_log from anon, authenticated;
 
 -- ------------------------------------------------------ Fonctions internes
 -- Rôle de l'utilisateur ('read', 'write', 'admin'), ou null si l'identifiant ou le mot de
@@ -267,9 +294,8 @@ as $$
   select food._role(u, p);
 $$;
 
--- ----------------------------------------------------- Fonctions publiques
--- Classes et aliments (tous rôles). Pour chaque aliment : nombre de repas où il est utilisé
--- et, pour une recette, ses ingrédients.
+-- Classes, unités et aliments (tous rôles). Pour chaque aliment : nombre de repas où il est utilisé et ses
+-- ingrédients { name, quantity (pour 1 portion, null si non définie), unit_id }.
 create or replace function food.get_catalog(u text, p text)
 returns jsonb
 language plpgsql
@@ -282,27 +308,25 @@ begin
     'classes', (select coalesce(jsonb_agg(jsonb_build_object(
                   'id', c.id, 'name', c.name, 'part_name', c.part_name, 'type', c.type)
                   order by c.position, c.id), '[]'::jsonb) from food.classes c),
+    'units',   (select coalesce(jsonb_agg(jsonb_build_object(
+                  'id', un.id, 'name', un.name, 'plural', un.plural)
+                  order by un.position, un.id), '[]'::jsonb) from food.units un),
     'foods',   (select coalesce(jsonb_agg(jsonb_build_object(
                   'id', f.id, 'name', f.name,
                   'class_ids', (select coalesce(jsonb_agg(fc.class_id order by fc.class_id), '[]'::jsonb)
                                 from food.food_classes fc where fc.food_id = f.id),
                   'uses', (select count(*) from food.meal_items mi where mi.food_id = f.id),
-                  'ingredients', (select coalesce(jsonb_agg(i.name order by i.name), '[]'::jsonb)
-                                  from food.food_ingredients fi
-                                  join food.ingredients i on i.id = fi.ingredient_id
-                                  where fi.food_id = f.id
-                                    and exists (select 1 from food.food_classes fc2
-                                                join food.classes c2 on c2.id = fc2.class_id
-                                                where fc2.food_id = f.id and c2.type = 'combo')))
+                  'ingredients', food._food_ingredient_rows(f.id))
                   order by f.name), '[]'::jsonb) from food.foods f)
   );
 end;
 $$;
 
--- Repas entre deux dates incluses (tous rôles). Une ligne par aliment ; class_ids ne contient
--- que les classes de type composante (les classes combo ne sont jamais affichées dans les repas).
+-- Repas entre deux dates incluses (tous rôles). Une ligne par aliment ; class_ids ne contient que les
+-- classes de type composante (les classes combo ne sont jamais affichées dans les repas) ; portions :
+-- nombre de portions de l'aliment dans le repas.
 create or replace function food.get_meals(u text, p text, d_from date, d_to date)
-returns table (meal_date date, slot text, food_id bigint, food_name text, class_ids smallint[])
+returns table (meal_date date, slot text, food_id bigint, food_name text, class_ids smallint[], portions numeric)
 language plpgsql
 security definer
 set search_path = food, extensions
@@ -314,7 +338,8 @@ begin
            (select array_agg(fc.class_id order by fc.class_id)
             from food.food_classes fc
             join food.classes c on c.id = fc.class_id
-            where fc.food_id = f.id and c.type = 'composante')
+            where fc.food_id = f.id and c.type = 'composante'),
+           mi.portions
     from food.meals m
     join food.meal_items mi on mi.meal_id = m.id
     join food.foods f on f.id = mi.food_id
@@ -323,11 +348,12 @@ begin
 end;
 $$;
 
--- Remplace entièrement un repas (rôles write et admin). Liste vide = repas vidé.
--- Seuls les jours des 15 derniers jours à +30 jours sont modifiables.
--- Un créneau bloqué par une contrainte du jour ne peut pas être rempli ('slot_blocked') ; le vider
--- reste possible.
-create or replace function food.set_meal(u text, p text, d date, s text, food_ids bigint[])
+-- Remplace entièrement un repas (rôles write et admin). Liste vide = repas vidé. `portions` : tableau
+-- parallèle à food_ids (nombre de portions de chaque aliment ; 1 si absent) : strictement positif, 99 au
+-- plus, 2 décimales au plus ('invalid_portions'). Un aliment en double compte une seule fois (le premier).
+-- Seuls les jours des 15 derniers jours à +30 jours sont modifiables. Un créneau bloqué par une contrainte
+-- du jour ne peut pas être rempli ('slot_blocked') ; le vider reste possible.
+create or replace function food.set_meal(u text, p text, d date, s text, food_ids bigint[], portions numeric[] default null)
 returns void
 language plpgsql
 security definer
@@ -337,6 +363,7 @@ declare
   r text;
   slot_ text := lower(s);
   ids bigint[];
+  ps numeric[];
   mid bigint;
   before_names jsonb;
   after_names jsonb;
@@ -349,7 +376,17 @@ begin
     raise exception 'out_of_window';
   end if;
 
-  select coalesce(array_agg(distinct x), '{}') into ids from unnest(coalesce(food_ids, '{}')) x;
+  select coalesce(array_agg(t.fid order by t.ord), '{}'), coalesce(array_agg(t.pv order by t.ord), '{}')
+    into ids, ps
+  from (
+    select distinct on (x.fid) x.fid, x.ord, coalesce(pp.pv, 1) as pv
+    from unnest(coalesce(food_ids, '{}')) with ordinality as x(fid, ord)
+    left join unnest(coalesce(portions, '{}')) with ordinality as pp(pv, ord) on pp.ord = x.ord
+    order by x.fid, x.ord
+  ) t;
+  if exists (select 1 from unnest(ps) v where v <= 0 or v > 99 or round(v, 2) <> v) then
+    raise exception 'invalid_portions';
+  end if;
   if (select count(*) from food.foods where id = any (ids)) <> cardinality(ids) then
     raise exception 'unknown_food';
   end if;
@@ -361,16 +398,19 @@ begin
     raise exception 'slot_blocked';
   end if;
 
-  select coalesce(jsonb_agg(f.name order by f.name), '[]'::jsonb) into before_names
+  -- Un aliment dont les portions ne valent pas 1 est écrit avec son multiplicateur (« poulet ×1.5 »).
+  select coalesce(jsonb_agg(f.name || case when mi.portions <> 1 then ' ×' || trim_scale(mi.portions)::text else '' end
+                            order by f.name), '[]'::jsonb) into before_names
   from food.meals m
   join food.meal_items mi on mi.meal_id = m.id
   join food.foods f on f.id = mi.food_id
   where m.meal_date = d and m.slot = slot_;
-  select coalesce(jsonb_agg(f.name order by f.name), '[]'::jsonb) into after_names
-  from food.foods f
-  where f.id = any (ids);
+  select coalesce(jsonb_agg(f.name || case when t.pv <> 1 then ' ×' || trim_scale(t.pv)::text else '' end
+                            order by f.name), '[]'::jsonb) into after_names
+  from unnest(ids, ps) as t(fid, pv)
+  join food.foods f on f.id = t.fid;
 
-  -- Rien n'est écrit (ni consigné) si le repas ne change pas.
+  -- Rien n'est écrit (ni consigné) si le repas ne change pas (aliments et portions).
   if before_names <> after_names then
     if cardinality(ids) = 0 then
       delete from food.meals where meal_date = d and slot = slot_;
@@ -379,7 +419,8 @@ begin
       on conflict (meal_date, slot) do update set slot = excluded.slot
       returning id into mid;
       delete from food.meal_items where meal_id = mid;
-      insert into food.meal_items (meal_id, food_id) select mid, unnest(ids);
+      insert into food.meal_items (meal_id, food_id, portions)
+      select mid, t.fid, t.pv from unnest(ids, ps) as t(fid, pv);
     end if;
 
     perform food._audit(
@@ -434,7 +475,6 @@ as $$
   where c.id = any (ids);
 $$;
 
--- ------------------------------------------------------ Fonctions internes
 -- Vrai si la liste de classes contient une classe de type combo (= l'aliment est une recette).
 create or replace function food._is_recipe(cids smallint[])
 returns boolean
@@ -446,74 +486,145 @@ as $$
   select exists (select 1 from food.classes c where c.id = any (cids) and c.type = 'combo');
 $$;
 
--- Noms d'ingrédients saisis : minuscules, sans espaces autour, sans vide ni doublon, triés.
--- Refuse un nom de plus de 60 caractères ('invalid_name').
-create or replace function food._clean_ingredients(ings text[])
-returns text[]
-language plpgsql
-security definer
-set search_path = food
-as $$
-declare
-  names text[];
-begin
-  select coalesce(array_agg(distinct s.n order by s.n), '{}') into names
-  from (select lower(btrim(x)) as n from unnest(coalesce(ings, '{}')) x) s
-  where s.n is not null and s.n <> '';
-  if exists (select 1 from unnest(names) n where char_length(n) > 60) then
-    raise exception 'invalid_name';
-  end if;
-  return names;
-end;
-$$;
-
--- Noms des ingrédients d'un aliment, triés.
-create or replace function food._food_ingredient_names(fid bigint)
-returns text[]
-language sql
-stable
-security definer
-set search_path = food
-as $$
-  select coalesce(array_agg(i.name order by i.name), '{}')
-  from food.food_ingredients fi
-  join food.ingredients i on i.id = fi.ingredient_id
-  where fi.food_id = fid;
-$$;
-
--- Remplace les ingrédients d'un aliment par la liste de noms donnée (déjà normalisée) :
--- les ingrédients qui n'existent pas sont créés, ceux qui existent sont réutilisés.
--- Un ingrédient délié d'un aliment n'est jamais supprimé automatiquement.
-create or replace function food._set_food_ingredients(fid bigint, names text[])
+-- Remplace les ingrédients d'un aliment par les lignes données (déjà normalisées par _clean_ing_rows) :
+-- les ingrédients qui n'existent pas sont créés (avec l'unité de la ligne), ceux qui existent sont réutilisés ;
+-- la quantité du lien est celle de la ligne. Un ingrédient délié n'est jamais supprimé automatiquement.
+create or replace function food._set_food_ingredients(fid bigint, lines jsonb)
 returns void
 language plpgsql
 security definer
 set search_path = food
 as $$
 declare
-  iids bigint[];
+  l jsonb;
+  iid bigint;
+  iids bigint[] := '{}';
 begin
-  insert into food.ingredients (name) select unnest(names) on conflict (name) do nothing;
-  select coalesce(array_agg(i.id order by i.id), '{}') into iids
-  from food.ingredients i where i.name = any (names);
+  for l in select value from jsonb_array_elements(lines) loop
+    select i.id into iid from food.ingredients i where i.name = (l ->> 'name');
+    if iid is null then
+      insert into food.ingredients (name, unit_id) values (l ->> 'name', (l ->> 'unit_id')::smallint)
+      returning id into iid;
+    end if;
+    iids := iids || iid;
+    insert into food.food_ingredients (food_id, ingredient_id, quantity)
+    values (fid, iid, case when jsonb_typeof(l -> 'quantity') = 'number' then (l ->> 'quantity')::numeric end)
+    on conflict (food_id, ingredient_id) do update set quantity = excluded.quantity;
+  end loop;
   delete from food.food_ingredients where food_id = fid and not (ingredient_id = any (iids));
-  insert into food.food_ingredients (food_id, ingredient_id) select fid, unnest(iids)
-  on conflict do nothing;
 end;
 $$;
 
--- État d'un aliment pour l'audit : { name, classes } et, pour une recette, { ..., ingredients }.
-create or replace function food._food_state(n text, cids smallint[], ings text[])
+-- Unité par défaut (la première dans l'ordre d'affichage : g).
+create or replace function food._default_unit()
+returns smallint
+language sql
+stable
+security definer
+set search_path = food
+as $$
+  select u.id from food.units u order by u.position, u.id limit 1;
+$$;
+
+-- État d'un ingrédient pour l'audit : { name, unit }.
+create or replace function food._ingredient_state(n text, uid smallint)
 returns jsonb
 language sql
 security definer
 set search_path = food
 as $$
-  select jsonb_build_object('name', n, 'classes', food._class_names(cids))
-         || case when food._is_recipe(cids)
-                 then jsonb_build_object('ingredients', to_jsonb(ings))
-                 else '{}'::jsonb end;
--- ------------------------------------------------------ Fonctions internes
+  select jsonb_build_object('name', n, 'unit', (select u.name from food.units u where u.id = uid));
+$$;
+
+-- Lignes d'ingrédients saisies pour un aliment : JSON [{ name, quantity, unit_id }] (un simple tableau de
+-- noms est accepté). Renvoie les lignes normalisées : noms en minuscules sans doublon, quantité null ou
+-- strictement positive (99999 au plus, 3 décimales au plus), unité = celle de l'ingrédient s'il existe,
+-- sinon celle demandée (g par défaut). Erreurs : invalid_name, invalid_quantity, unknown_unit.
+create or replace function food._clean_ing_rows(ings jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = food
+as $$
+declare
+  e jsonb;
+  nm text;
+  q numeric;
+  uid smallint;
+  k smallint;
+  res jsonb := '[]'::jsonb;
+  seen text[] := '{}';
+begin
+  if ings is null or jsonb_typeof(ings) <> 'array' then
+    return res;
+  end if;
+  for e in select value from jsonb_array_elements(ings) loop
+    if jsonb_typeof(e) = 'string' then
+      nm := lower(btrim(e #>> '{}'));
+      q := null;
+      uid := null;
+    elsif jsonb_typeof(e) = 'object' then
+      nm := lower(btrim(coalesce(e ->> 'name', '')));
+      q := case when jsonb_typeof(e -> 'quantity') = 'number' then (e ->> 'quantity')::numeric end;
+      uid := case when jsonb_typeof(e -> 'unit_id') = 'number' then (e ->> 'unit_id')::smallint end;
+    else
+      continue;
+    end if;
+    if nm = '' then
+      continue;
+    end if;
+    if char_length(nm) > 60 then
+      raise exception 'invalid_name';
+    end if;
+    if q is not null and not (q > 0 and q <= 99999 and round(q, 3) = q) then
+      raise exception 'invalid_quantity';
+    end if;
+    if uid is not null and not exists (select 1 from food.units u where u.id = uid) then
+      raise exception 'unknown_unit';
+    end if;
+    if nm = any (seen) then
+      continue;
+    end if;
+    seen := seen || nm;
+    select i.unit_id into k from food.ingredients i where i.name = nm;
+    res := res || jsonb_build_object('name', nm, 'quantity', q, 'unit_id', coalesce(k, uid, food._default_unit()));
+  end loop;
+  return res;
+end;
+$$;
+
+-- Ingrédients d'un aliment : JSON [{ name, quantity, unit_id }] trié par nom (quantity : null si non définie).
+create or replace function food._food_ingredient_rows(fid bigint)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = food
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('name', i.name, 'quantity', fi.quantity, 'unit_id', i.unit_id)
+                            order by i.name), '[]'::jsonb)
+  from food.food_ingredients fi
+  join food.ingredients i on i.id = fi.ingredient_id
+  where fi.food_id = fid;
+$$;
+
+-- État d'un aliment pour l'audit : { name, classes, ingredients: [{ name, quantity, unit }] }.
+create or replace function food._food_state(n text, cids smallint[], lines jsonb)
+returns jsonb
+language sql
+security definer
+set search_path = food
+as $$
+  select jsonb_build_object(
+    'name', n,
+    'classes', food._class_names(cids),
+    'ingredients', coalesce((
+      select jsonb_agg(jsonb_build_object('name', e ->> 'name', 'quantity', e -> 'quantity',
+                                          'unit', (select u.name from food.units u where u.id = (e ->> 'unit_id')::smallint))
+                       order by e ->> 'name')
+      from jsonb_array_elements(lines) e), '[]'::jsonb));
+$$;
+
 -- Nom d'un effet (null si aucun).
 create or replace function food._effect_name(eid smallint)
 returns text
@@ -523,6 +634,8 @@ security definer
 set search_path = food
 as $$
   select e.name from food.effects e where e.id = eid;
+$$;
+
 -- État d'une contrainte pour l'audit : { name, effect } (effect : nom de l'effet, ou null).
 create or replace function food._constraint_state(n text, eid smallint)
 returns jsonb
@@ -744,7 +857,12 @@ begin
 end;
 $$;
 
-create or replace function food.add_food(u text, p text, n text, cids smallint[], ings text[] default null)
+-- Ajoute un aliment avec une ou plusieurs classes (rôle admin uniquement). Au moins une classe de type
+-- composante. `ings` : JSON [{ name, quantity, unit_id }] (quantité pour 1 portion, facultative ; unit_id
+-- seulement pour un ingrédient créé). Un aliment simple a 1 ingrédient de même nom (seules la quantité et
+-- l'unité de la première ligne comptent) ; une recette a au moins 1 ingrédient ; avec 2 ingrédients ou
+-- plus la classe Recettes est ajoutée d'office.
+create or replace function food.add_food(u text, p text, n text, cids smallint[], ings jsonb default null)
 returns bigint
 language plpgsql
 security definer
@@ -754,7 +872,10 @@ declare
   r text;
   name_ text := lower(btrim(coalesce(n, '')));
   ids smallint[];
-  names text[];
+  lines jsonb;
+  first_row jsonb;
+  uid smallint;
+  combo smallint;
   new_id bigint;
 begin
   r := food._check(u, p, array['admin']);
@@ -762,26 +883,40 @@ begin
     raise exception 'invalid_name';
   end if;
   ids := food._clean_classes(cids);
-  if food._is_recipe(ids) then
-    names := food._clean_ingredients(ings);
-    if cardinality(names) = 0 then
+  lines := food._clean_ing_rows(ings);
+  if food._is_recipe(ids) or jsonb_array_length(lines) >= 2 then
+    if jsonb_array_length(lines) = 0 then
       raise exception 'ingredients_required';
     end if;
+    if not food._is_recipe(ids) then
+      select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
+      if combo is not null then
+        select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
+      end if;
+    end if;
   else
-    names := array[name_];
+    first_row := lines -> 0;
+    select i.unit_id into uid from food.ingredients i where i.name = name_;
+    uid := coalesce(uid, (first_row ->> 'unit_id')::smallint, food._default_unit());
+    lines := jsonb_build_array(jsonb_build_object('name', name_, 'quantity', first_row -> 'quantity', 'unit_id', uid));
   end if;
   if exists (select 1 from food.foods where name = name_) then
     raise exception 'food_exists';
   end if;
   insert into food.foods (name) values (name_) returning id into new_id;
   insert into food.food_classes (food_id, class_id) select new_id, unnest(ids);
-  perform food._set_food_ingredients(new_id, names);
-  perform food._audit(u, r, 'food_add', name_, null, food._food_state(name_, ids, names));
+  perform food._set_food_ingredients(new_id, lines);
+  perform food._audit(u, r, 'food_add', name_, null,
+                      food._food_state(name_, ids, food._food_ingredient_rows(new_id)));
   return new_id;
 end;
 $$;
 
-create or replace function food.update_food(u text, p text, fid bigint, n text, cids smallint[], ings text[] default null)
+-- Modifie le nom, les classes et les ingrédients (avec leurs quantités) d'un aliment (rôle admin
+-- uniquement). Mêmes règles d'ingrédients que add_food. Les repas qui l'utilisent suivent automatiquement
+-- (ils pointent vers l'id). Sur un aliment déjà utilisé dans des repas, on peut ajouter des classes de type
+-- composante mais pas en retirer (la classe Recettes, de type combo, peut être ajoutée ou retirée librement).
+create or replace function food.update_food(u text, p text, fid bigint, n text, cids smallint[], ings jsonb default null)
 returns void
 language plpgsql
 security definer
@@ -794,9 +929,12 @@ declare
   old_name text;
   old_ids smallint[];
   old_comp smallint[];
-  old_ings text[];
-  new_ings text[];
-  recipe boolean;
+  old_rows jsonb;
+  lines jsonb;
+  new_rows jsonb;
+  first_row jsonb;
+  uid smallint;
+  combo smallint;
 begin
   r := food._check(u, p, array['admin']);
   if name_ = '' or char_length(name_) > 60 then
@@ -807,22 +945,31 @@ begin
     raise exception 'unknown_food';
   end if;
   ids := food._clean_classes(cids);
-  recipe := food._is_recipe(ids);
+  lines := food._clean_ing_rows(ings);
+  if food._is_recipe(ids) or jsonb_array_length(lines) >= 2 then
+    if jsonb_array_length(lines) = 0 then
+      raise exception 'ingredients_required';
+    end if;
+    if not food._is_recipe(ids) then
+      select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
+      if combo is not null then
+        select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
+      end if;
+    end if;
+  else
+    first_row := lines -> 0;
+    select i.unit_id into uid from food.ingredients i where i.name = name_;
+    uid := coalesce(uid, (first_row ->> 'unit_id')::smallint, food._default_unit());
+    lines := jsonb_build_array(jsonb_build_object('name', name_, 'quantity', first_row -> 'quantity', 'unit_id', uid));
+  end if;
   select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_ids
   from food.food_classes fc where fc.food_id = fid;
   select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_comp
   from food.food_classes fc
   join food.classes c on c.id = fc.class_id
   where fc.food_id = fid and c.type = 'composante';
-  old_ings := food._food_ingredient_names(fid);
-  if recipe then
-    new_ings := food._clean_ingredients(ings);
-    if cardinality(new_ings) = 0 then
-      raise exception 'ingredients_required';
-    end if;
-  else
-    new_ings := array[name_];
-  end if;
+  old_rows := food._food_ingredient_rows(fid);
+  select coalesce(jsonb_agg(e order by e ->> 'name'), '[]'::jsonb) into new_rows from jsonb_array_elements(lines) e;
   if exists (select 1 from food.foods where name = name_ and id <> fid) then
     raise exception 'food_exists';
   end if;
@@ -830,22 +977,22 @@ begin
     raise exception 'food_in_use_class';
   end if;
 
-  -- Rien n'est écrit (ni consigné) si l'aliment ne change pas.
-  if name_ <> old_name or ids <> old_ids or (recipe and new_ings <> old_ings) then
+  -- Rien n'est écrit (ni consigné) si l'aliment ne change pas (nom, classes, ingrédients et quantités).
+  if name_ <> old_name or ids <> old_ids or new_rows <> old_rows then
     update food.foods set name = name_ where id = fid;
     delete from food.food_classes where food_id = fid and not (class_id = any (ids));
     insert into food.food_classes (food_id, class_id) select fid, unnest(ids)
     on conflict do nothing;
-    perform food._set_food_ingredients(fid, new_ings);
+    perform food._set_food_ingredients(fid, lines);
     perform food._audit(u, r, 'food_update', old_name,
-                        food._food_state(old_name, old_ids, old_ings),
-                        food._food_state(name_, ids, new_ings));
+                        food._food_state(old_name, old_ids, old_rows),
+                        food._food_state(name_, ids, food._food_ingredient_rows(fid)));
   end if;
 end;
 $$;
 
--- Supprime un aliment (rôle admin uniquement), bloqué s'il est utilisé dans un repas.
--- Ses ingrédients restent en base (aucun nettoyage automatique).
+-- Supprime un aliment (rôle admin uniquement), bloqué s'il est utilisé dans un repas. Si c'est le cas, l'erreur
+-- donne la liste des repas (JSON { n, items }). Ses ingrédients restent en base (aucun nettoyage automatique).
 create or replace function food.delete_food(u text, p text, fid bigint)
 returns void
 language plpgsql
@@ -874,15 +1021,15 @@ begin
     select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_ids
     from food.food_classes fc where fc.food_id = fid;
     perform food._audit(u, r, 'food_delete', old_name,
-                        food._food_state(old_name, old_ids, food._food_ingredient_names(fid)), null);
+                        food._food_state(old_name, old_ids, food._food_ingredient_rows(fid)), null);
     delete from food.foods where id = fid;
   end if;
 end;
 $$;
 
--- Ingrédients (rôle admin uniquement), avec le nombre d'aliments qui les utilisent.
+-- Ingrédients (rôle admin uniquement), avec le nombre d'aliments qui les utilisent et leur unité.
 create or replace function food.get_ingredients(u text, p text)
-returns table (id bigint, name text, uses bigint)
+returns table (id bigint, name text, uses bigint, unit_id smallint)
 language plpgsql
 security definer
 set search_path = food, extensions
@@ -891,14 +1038,15 @@ begin
   perform food._check(u, p, array['admin']);
   return query
     select i.id, i.name,
-           (select count(*) from food.food_ingredients fi where fi.ingredient_id = i.id)
+           (select count(*) from food.food_ingredients fi where fi.ingredient_id = i.id),
+           i.unit_id
     from food.ingredients i
     order by i.name, i.id;
 end;
 $$;
 
--- Crée un ingrédient (rôle admin uniquement). Le nom est unique, en minuscules.
-create or replace function food.add_ingredient(u text, p text, n text)
+-- Crée un ingrédient avec son unité (g par défaut) (rôle admin uniquement). Le nom est unique, en minuscules.
+create or replace function food.add_ingredient(u text, p text, n text, uid smallint default null)
 returns bigint
 language plpgsql
 security definer
@@ -907,25 +1055,30 @@ as $$
 declare
   r text;
   name_ text := lower(btrim(coalesce(n, '')));
+  unit_ smallint := coalesce(uid, food._default_unit());
   new_id bigint;
 begin
   r := food._check(u, p, array['admin']);
   if name_ = '' or char_length(name_) > 60 then
     raise exception 'invalid_name';
   end if;
+  if not exists (select 1 from food.units un where un.id = unit_) then
+    raise exception 'unknown_unit';
+  end if;
   if exists (select 1 from food.ingredients i where i.name = name_) then
     raise exception 'ingredient_exists';
   end if;
-  insert into food.ingredients (name) values (name_) returning id into new_id;
-  perform food._audit(u, r, 'ingredient_add', name_, null, to_jsonb(name_));
+  insert into food.ingredients (name, unit_id) values (name_, unit_) returning id into new_id;
+  perform food._audit(u, r, 'ingredient_add', name_, null, food._ingredient_state(name_, unit_));
   return new_id;
 end;
 $$;
 
--- Renomme un ingrédient (rôle admin uniquement). Les aliments qui l'utilisent suivent
--- automatiquement (ils pointent vers l'identifiant). Refusé si le nom existe déjà, ou si
--- l'ingrédient est celui d'un aliment simple (il doit garder le nom de son aliment).
-create or replace function food.update_ingredient(u text, p text, iid bigint, n text)
+-- Modifie le nom et l'unité d'un ingrédient (rôle admin uniquement ; uid null : l'unité ne change pas). Les
+-- aliments qui l'utilisent suivent automatiquement. Changer l'unité ne convertit pas les quantités déjà saisies.
+-- Renommer est refusé si le nom existe déjà, ou si l'ingrédient est celui d'un aliment simple (il doit
+-- garder le nom de son aliment).
+create or replace function food.update_ingredient(u text, p text, iid bigint, n text, uid smallint default null)
 returns void
 language plpgsql
 security definer
@@ -935,35 +1088,44 @@ declare
   r text;
   name_ text := lower(btrim(coalesce(n, '')));
   old_name text;
+  old_unit smallint;
+  unit_ smallint;
 begin
   r := food._check(u, p, array['admin']);
   if name_ = '' or char_length(name_) > 60 then
     raise exception 'invalid_name';
   end if;
-  select i.name into old_name from food.ingredients i where i.id = iid;
+  select i.name, i.unit_id into old_name, old_unit from food.ingredients i where i.id = iid;
   if not found then
     raise exception 'unknown_ingredient';
+  end if;
+  unit_ := coalesce(uid, old_unit);
+  if not exists (select 1 from food.units un where un.id = unit_) then
+    raise exception 'unknown_unit';
   end if;
   if exists (select 1 from food.ingredients i where i.name = name_ and i.id <> iid) then
     raise exception 'ingredient_exists';
   end if;
 
-  -- Rien n'est écrit (ni consigné) si le nom ne change pas.
-  if name_ <> old_name then
-    if exists (select 1 from food.food_ingredients fi
-               where fi.ingredient_id = iid
-                 and not exists (select 1 from food.food_classes fc
-                                 join food.classes c on c.id = fc.class_id
-                                 where fc.food_id = fi.food_id and c.type = 'combo')) then
+  -- Rien n'est écrit (ni consigné) si ni le nom ni l'unité ne changent.
+  if name_ <> old_name or unit_ <> old_unit then
+    if name_ <> old_name and exists (
+         select 1 from food.food_ingredients fi
+         where fi.ingredient_id = iid
+           and not exists (select 1 from food.food_classes fc
+                           join food.classes c on c.id = fc.class_id
+                           where fc.food_id = fi.food_id and c.type = 'combo')) then
       raise exception 'ingredient_of_simple_food';
     end if;
-    update food.ingredients set name = name_ where id = iid;
-    perform food._audit(u, r, 'ingredient_update', old_name, to_jsonb(old_name), to_jsonb(name_));
+    update food.ingredients set name = name_, unit_id = unit_ where id = iid;
+    perform food._audit(u, r, 'ingredient_update', old_name,
+                        food._ingredient_state(old_name, old_unit), food._ingredient_state(name_, unit_));
   end if;
 end;
 $$;
 
--- Supprime un ingrédient (rôle admin uniquement), bloqué s'il est lié à au moins un aliment.
+-- Supprime un ingrédient (rôle admin uniquement), bloqué s'il est lié à au moins un aliment. S'il est utilisé,
+-- l'erreur donne la liste des aliments (JSON { n, items }).
 create or replace function food.delete_ingredient(u text, p text, iid bigint)
 returns void
 language plpgsql
@@ -975,6 +1137,7 @@ declare
   n integer;
   items jsonb;
   old_name text;
+  old_unit smallint;
 begin
   r := food._check(u, p, array['admin']);
   select count(*) into n from food.food_ingredients fi where fi.ingredient_id = iid;
@@ -985,13 +1148,14 @@ begin
     where fi.ingredient_id = iid;
     raise exception 'ingredient_in_use' using detail = jsonb_build_object('n', n, 'items', items)::text;
   end if;
-  select i.name into old_name from food.ingredients i where i.id = iid;
+  select i.name, i.unit_id into old_name, old_unit from food.ingredients i where i.id = iid;
   if found then
     delete from food.ingredients where id = iid;
-    perform food._audit(u, r, 'ingredient_delete', old_name, to_jsonb(old_name), null);
+    perform food._audit(u, r, 'ingredient_delete', old_name, food._ingredient_state(old_name, old_unit), null);
   end if;
 end;
--- ----------------------------------------------------- Fonctions publiques
+$$;
+
 -- Effets possibles (tous rôles : l'onglet Repas doit savoir quels créneaux sont bloqués).
 create or replace function food.get_effects(u text, p text)
 returns table (id smallint, name text, description text, blocked_slot text)
@@ -1017,17 +1181,19 @@ revoke execute on function food._audit(text, text, text, text, jsonb, jsonb) fro
 revoke execute on function food._clean_classes(smallint[])         from public, anon, authenticated;
 revoke execute on function food._class_names(smallint[])           from public, anon, authenticated;
 revoke execute on function food._is_recipe(smallint[])             from public, anon, authenticated;
-revoke execute on function food._clean_ingredients(text[])         from public, anon, authenticated;
-revoke execute on function food._food_ingredient_names(bigint)     from public, anon, authenticated;
-revoke execute on function food._set_food_ingredients(bigint, text[]) from public, anon, authenticated;
-revoke execute on function food._food_state(text, smallint[], text[]) from public, anon, authenticated;
+revoke execute on function food._default_unit()                    from public, anon, authenticated;
+revoke execute on function food._ingredient_state(text, smallint)  from public, anon, authenticated;
+revoke execute on function food._clean_ing_rows(jsonb)             from public, anon, authenticated;
+revoke execute on function food._food_ingredient_rows(bigint)      from public, anon, authenticated;
+revoke execute on function food._set_food_ingredients(bigint, jsonb) from public, anon, authenticated;
+revoke execute on function food._food_state(text, smallint[], jsonb) from public, anon, authenticated;
 revoke execute on function food._effect_name(smallint)             from public, anon, authenticated;
 revoke execute on function food._constraint_state(text, smallint)  from public, anon, authenticated;
 
 revoke execute on function food.login(text, text)                                      from public;
 revoke execute on function food.get_catalog(text, text)                                from public;
 revoke execute on function food.get_meals(text, text, date, date)                      from public;
-revoke execute on function food.set_meal(text, text, date, text, bigint[])             from public;
+revoke execute on function food.set_meal(text, text, date, text, bigint[], numeric[])  from public;
 revoke execute on function food.get_constraints(text, text)                            from public;
 revoke execute on function food.get_day_constraints(text, text, date, date)            from public;
 revoke execute on function food.set_day_constraints(text, text, date, bigint[])        from public;
@@ -1035,18 +1201,18 @@ revoke execute on function food.add_constraint(text, text, text, smallint)      
 revoke execute on function food.update_constraint(text, text, bigint, text, smallint)  from public;
 revoke execute on function food.get_effects(text, text)                                from public;
 revoke execute on function food.delete_constraint(text, text, bigint)                  from public;
-revoke execute on function food.add_food(text, text, text, smallint[], text[])           from public;
-revoke execute on function food.update_food(text, text, bigint, text, smallint[], text[]) from public;
+revoke execute on function food.add_food(text, text, text, smallint[], jsonb)          from public;
+revoke execute on function food.update_food(text, text, bigint, text, smallint[], jsonb) from public;
 revoke execute on function food.delete_food(text, text, bigint)                        from public;
 revoke execute on function food.get_ingredients(text, text)                            from public;
-revoke execute on function food.add_ingredient(text, text, text)                       from public;
-revoke execute on function food.update_ingredient(text, text, bigint, text)            from public;
+revoke execute on function food.add_ingredient(text, text, text, smallint)             from public;
+revoke execute on function food.update_ingredient(text, text, bigint, text, smallint)  from public;
 revoke execute on function food.delete_ingredient(text, text, bigint)                  from public;
 
 grant execute on function food.login(text, text)                                       to anon, authenticated;
 grant execute on function food.get_catalog(text, text)                                 to anon, authenticated;
 grant execute on function food.get_meals(text, text, date, date)                       to anon, authenticated;
-grant execute on function food.set_meal(text, text, date, text, bigint[])              to anon, authenticated;
+grant execute on function food.set_meal(text, text, date, text, bigint[], numeric[])   to anon, authenticated;
 grant execute on function food.get_constraints(text, text)                             to anon, authenticated;
 grant execute on function food.get_day_constraints(text, text, date, date)             to anon, authenticated;
 grant execute on function food.set_day_constraints(text, text, date, bigint[])         to anon, authenticated;
@@ -1054,10 +1220,10 @@ grant execute on function food.add_constraint(text, text, text, smallint)       
 grant execute on function food.update_constraint(text, text, bigint, text, smallint)   to anon, authenticated;
 grant execute on function food.get_effects(text, text)                                 to anon, authenticated;
 grant execute on function food.delete_constraint(text, text, bigint)                   to anon, authenticated;
-grant execute on function food.add_food(text, text, text, smallint[], text[])            to anon, authenticated;
-grant execute on function food.update_food(text, text, bigint, text, smallint[], text[]) to anon, authenticated;
+grant execute on function food.add_food(text, text, text, smallint[], jsonb)           to anon, authenticated;
+grant execute on function food.update_food(text, text, bigint, text, smallint[], jsonb) to anon, authenticated;
 grant execute on function food.delete_food(text, text, bigint)                         to anon, authenticated;
 grant execute on function food.get_ingredients(text, text)                             to anon, authenticated;
-grant execute on function food.add_ingredient(text, text, text)                        to anon, authenticated;
-grant execute on function food.update_ingredient(text, text, bigint, text)             to anon, authenticated;
+grant execute on function food.add_ingredient(text, text, text, smallint)              to anon, authenticated;
+grant execute on function food.update_ingredient(text, text, bigint, text, smallint)   to anon, authenticated;
 grant execute on function food.delete_ingredient(text, text, bigint)                   to anon, authenticated;

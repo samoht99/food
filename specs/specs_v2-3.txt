@@ -1,0 +1,67 @@
+SPECIFICATIONS (v2-3) : quantités des ingrédients, unités et portions
+
+Ce fichier ne contient que les nouveautés et les modifications par rapport à la v1 (specs_v1-8), à la v2-1 et à la v2-2. Tout ce qui n'est pas mentionné ici est inchangé.
+
+***** Contexte
+
+Pour chaque aliment d'un repas on veut connaître la quantité de chacun de ses ingrédients (consultation des repas) et, plus tard, savoir quelle quantité d'un ingrédient acheter (liste de courses, hors de cette version). La quantité d'un ingrédient dépend de l'aliment et du repas : elle est donc répartie sur trois niveaux (unité de l'ingrédient, quantité de base de l'aliment, nombre de portions dans le repas).
+
+***** Modèle de données
+
+1- unités
+1-1- les unités sont stockées dans une table à part (units) : un nom au singulier, un nom au pluriel et une position d'affichage. Liste fixe, créée / modifiée uniquement en SQL (comme les classes et les effets). Cinq unités au départ : g, ml, pièce (pièces), c. à soupe, c. à café
+1-2- chaque ingrédient a une unité (colonne unit_id) et une seule : toutes ses quantités, dans tous les aliments, sont exprimées dans cette unité (ce qui permettra d'additionner les quantités d'un même ingrédient). Par défaut g
+1-3- changer l'unité d'un ingrédient ne convertit pas les quantités déjà saisies (les nombres restent tels quels) : le site demande une confirmation quand l'ingrédient est déjà utilisé
+
+2- quantité d'un ingrédient dans un aliment
+2-1- chaque lien aliment-ingrédient porte une quantité de base : la quantité d'ingrédient pour 1 portion de l'aliment, dans l'unité de l'ingrédient. Elle est facultative : tant qu'elle n'est pas saisie elle est « non définie » (vide). Elle est strictement positive, 99999 au plus, avec 3 décimales au plus
+2-2- les aliments simples ont aussi une quantité de base (celle de leur unique ingrédient, de même nom qu'eux). Les aliments existants gardent une quantité non définie tant que l'admin ne l'a pas saisie
+2-3- règles des ingrédients d'un aliment (précisions de la v2-1) :
+2-3-1- un aliment simple a exactement 1 ingrédient (de même nom que lui) ; à partir de 2 ingrédients l'aliment est une recette : la classe Recettes lui est ajoutée automatiquement (par la base aussi, pas seulement par le site)
+2-3-2- une recette a au moins 1 ingrédient
+2-3-3- les noms d'ingrédients inconnus sont créés à la volée (avec l'unité choisie, g par défaut) ; pour un ingrédient existant, l'unité envoyée est ignorée (c'est celle de l'ingrédient)
+2-3-4- à l'ajout d'un aliment, cocher Recettes retire toujours la ligne automatique (ingrédient de même nom que l'aliment) : la liste reste vide tant qu'aucun ingrédient n'est ajouté. À la modification d'un aliment existant, cocher Recettes garde la ligne si une quantité y est saisie
+
+3- portions
+3-1- chaque aliment d'un repas a un nombre de portions (colonne portions des aliments du repas), 1 par défaut : un multiplicateur appliqué aux quantités de base de ses ingrédients. Strictement positif, 99 au plus, 2 décimales au plus (0,25, 0,5, 0,75, 1,5, 2…)
+3-2- quantité d'un ingrédient dans un repas = quantité de base × nombre de portions (arrondi à 2 décimales à l'affichage). Une quantité de base non définie reste non définie
+3-3- le nombre de portions se règle à l'ajout d'un aliment dans un repas et à la modification d'un repas existant, dans le même popup. Il est conservé quand on copie un repas existant
+
+4- journal d'audit
+4-1- repas : dans l'état avant / après (liste de noms d'aliments), un aliment dont les portions ne valent pas 1 est écrit avec son multiplicateur ("poulet ×1.5"). Changer seulement les portions d'un repas est une modification du repas (meal_update)
+4-2- aliment : l'état avant / après contient pour tous les aliments (simples ou recettes) la liste de ses ingrédients { name, quantity, unit } (quantity : null si non définie). Changer une quantité est une modification de l'aliment (food_update)
+4-3- ingrédient : l'état avant / après passe d'un simple nom à { name, unit } (comme pour les contraintes en v2-2). Changer l'unité est une modification de l'ingrédient (ingredient_update). Les anciennes lignes gardent leur format d'origine
+
+***** Expérience utilisateur
+
+1- Onglets Repas et accueil
+1-1- chaque repas rempli a un bouton « Ingrédients ▾ » (pour tous les rôles) sous ses lignes : il déplie, pour chaque aliment du repas (par ordre alphabétique), le nom de l'aliment (suivi de « ×1,5 » si ses portions ne valent pas 1) puis ses ingrédients avec leur quantité du repas (« pâtes à lasagne 375 g »). Une quantité non définie s'affiche « quantité non définie » ; un aliment sans ingrédient « aucun ingrédient ». Le pluriel de l'unité s'applique à partir de 2 (« 2 pièces », « 1,5 pièce »)
+1-2- les lignes du repas elles-mêmes n'affichent pas le nombre de portions (« poulet », pas « poulet ×1,5 ») : il est seulement dans le détail déplié
+1-3- le popup de génération de repas a une section « Portions » sous les parties : une ligne par aliment choisi (une seule fois même s'il a plusieurs classes) avec des boutons − / + (pas de 0,25) et un champ numérique. Une valeur invalide est refusée à l'enregistrement. Modifier uniquement les portions d'un repas rempli demande la confirmation habituelle (v1 4-2)
+
+2- Onglet Admin
+2-1- ajout par popup : dans les parties Aliments, Ingrédients et Contraintes, la barre d'ajout en haut de la liste est remplacée par un bouton « + Ajouter un aliment / un ingrédient / une contrainte » qui ouvre un popup, le même que celui de la modification (titre « Nouvel aliment » etc., bouton « Ajouter »). Les erreurs s'affichent dans le popup
+2-2- popup d'un aliment : nom, classes (à l'ajout, la classe de la puce affichée est cochée d'office) et ingrédients, pour tous les aliments :
+2-2-1- une ligne par ingrédient : nom, quantité pour 1 portion, unité. L'unité d'un ingrédient existant est affichée (elle se change dans la partie Ingrédients) ; pour un ingrédient nouveau on choisit son unité dans la ligne
+2-2-2- un aliment simple a une seule ligne « automatique » : le nom de l'ingrédient suit le nom de l'aliment saisi, il n'est pas modifiable et la ligne n'est pas supprimable ; seule la quantité se saisit
+2-2-3- un champ « Ajouter un ingrédient… » (suggestions des ingrédients existants, saisie libre pour en créer un) ajoute une ligne. Dès qu'il y a 2 lignes, l'aliment devient une recette : la case Recettes se coche toute seule et se verrouille tant qu'il y a au moins 2 ingrédients
+2-2-4- décocher Recettes (1 ingrédient ou moins) redonne un aliment simple avec une seule ligne automatique, quantité vide
+2-3- dans la liste des aliments, un aliment dont au moins une quantité d'ingrédient n'est pas définie affiche « quantité à définir » sous son nom (à côté de l'indication d'utilisation)
+2-4- partie Ingrédients : l'unité est affichée en pastille à droite du nom ; le popup d'un ingrédient (ajout et modification) contient son nom et son unité
+
+3- Messages d'erreur (nouveaux)
+3-1- portions invalides : "Le nombre de portions doit être supérieur à 0 (99 au plus, 2 décimales au plus)."
+3-2- quantité invalide : "La quantité doit être un nombre supérieur à 0 (laissez vide si elle n'est pas définie)."
+3-3- unité qui n'existe plus : "Une unité sélectionnée n'existe plus. Rechargez la page."
+3-4- changement d'unité d'un ingrédient utilisé : popup de confirmation « Changer l'unité de cet ingrédient ? » (les quantités déjà saisies gardent leur valeur)
+
+***** Droits
+
+1- la liste des unités et les quantités des ingrédients de chaque aliment sont lisibles par tous les rôles (l'onglet Repas en a besoin). Seul l'admin modifie les unités des ingrédients et les quantités des aliments ; write et admin règlent les portions d'un repas
+
+***** Détails techniques
+
+1- migration 010 : table des unités (5 unités de départ), colonne unit_id des ingrédients (g par défaut), colonne quantity des liens aliment-ingrédient, colonne portions des aliments d'un repas ; fonctions get_catalog (unités et ingrédients de tous les aliments avec quantité), get_meals (colonne portions), set_meal (paramètre portions), add_food / update_food (ingrédients envoyés en JSON : [{ name, quantity, unit_id }]), get_ingredients (unit_id), add_ingredient / update_ingredient (paramètre uid), delete_food / delete_ingredient (audit). Un tableau de noms (format v2-1) reste accepté pour les ingrédients d'un aliment
+2- migration 011 : données. Donne leur unité aux ingrédients existants (liste fournie par l'utilisateur) : pièce pour ceux qui se comptent à la pièce, ml pour la sauce tomate, g pour les autres. Idempotente ; l'utilisateur la relit et la modifie avant de l'exécuter
+3- compatibilité : le site fonctionne aussi avant la migration 010 (il n'envoie alors ni portions ni quantités, et n'affiche pas d'unités) pour pouvoir être publié avant de lancer les scripts ; après 010 l'ancien site continue de fonctionner (seuls les ingrédients des recettes y apparaissent mal)
+4- schema.sql est mis à jour. La fausse API du dossier test est mise à jour. Branche de travail : v2

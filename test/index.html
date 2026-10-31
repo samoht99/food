@@ -50,6 +50,7 @@
     </div>
     <p class="dialog-hint">Laissez vides les parties que vous ne voulez pas remplir.</p>
     <div id="meal-rows" class="meal-rows"></div>
+    <div id="meal-portions" class="meal-portions"></div>
     <p id="meal-error" class="error" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" id="meal-cancel" class="btn-no">Annuler</button>
@@ -82,6 +83,7 @@
   <dialog id="ingredient-dialog" class="dialog" aria-labelledby="ingredient-title">
     <h2 id="ingredient-title" class="dialog-title">Modifier l'ingrédient</h2>
     <input id="ingredient-name" class="tag-input" type="text" maxlength="60" autocomplete="off" placeholder="Nom de l'ingrédient">
+    <label class="unit-row">Unité <span id="ingredient-unit"></span></label>
     <p id="ingredient-error" class="error" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" id="ingredient-cancel" class="btn-no">Annuler</button>
@@ -96,8 +98,8 @@
       <input id="food-edit-name" type="text" maxlength="60" autocomplete="off">
       <span class="form-label">Classes</span>
       <div id="food-edit-classes"></div>
-      <span id="food-edit-ing-label" class="form-label" hidden>Ingrédients</span>
-      <div id="food-edit-ingredients" hidden></div>
+      <span id="food-edit-ing-label" class="form-label">Ingrédients</span>
+      <div id="food-edit-ingredients"></div>
     </div>
     <p id="food-edit-error" class="error" role="alert"></p>
     <div class="dialog-actions">
