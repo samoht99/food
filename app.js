@@ -64,6 +64,7 @@ let meals = new Map(); // "2026-10-27|midi" -> [{ id, name, class_ids }]
 // Contraintes de jour : texte informatif affiché sur un jour, sans effet sur le comportement du site.
 let constraints = []; // [{ id, name, uses }] : liste des contraintes possibles (gérée par l'admin)
 let dayConstraints = new Map(); // "2026-10-27" -> [ids de contraintes]
+let effects = []; // [{ id, name, description, blocked_slot }] : effets possibles d'une contrainte (liste fixe, gérée en SQL)
 let ingredients = []; // [{ id, name, uses }] : liste des ingrédients (admin uniquement)
 let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constraints"
 let currentTab = "home";
@@ -102,9 +103,9 @@ async function rpc(name, args) {
 function usageOf(e) {
   try {
     const d = JSON.parse(e.details);
-    return { n: Number(d.n) || 0, items: Array.isArray(d.items) ? d.items : [] };
+    return { n: Number(d.n) || 0, slot: d.slot || "", items: Array.isArray(d.items) ? d.items : [] };
   } catch {
-    return { n: 0, items: [] };
+    return { n: 0, slot: "", items: [] };
   }
 }
 
@@ -123,6 +124,11 @@ function errorText(e) {
       return `Cet ingrédient est utilisé par ${usageOf(e).n || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`;
     case "ingredient_of_simple_food": return "Cet ingrédient est celui d'un aliment simple : renommez plutôt l'aliment.";
     case "unknown_ingredient": return "Un ingrédient sélectionné n'existe plus. Rechargez la page.";
+    case "slot_blocked": return "Ce repas est bloqué par une contrainte du jour : retirez-la pour pouvoir le remplir.";
+    case "meal_in_blocked_slot":
+      return `Le repas du ${e.details || "créneau bloqué"} de ce jour est rempli : videz-le avant d'attribuer cette contrainte.`;
+    case "effect_conflict": return "Cet effet bloquerait des repas déjà remplis. Videz-les d'abord.";
+    case "unknown_effect": return "Un effet sélectionné n'existe plus. Rechargez la page.";
     case "unknown_class": return "Une classe sélectionnée n'existe plus. Rechargez la page.";
     case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
     case "constraint_exists": return "Cette contrainte existe déjà.";
@@ -180,6 +186,25 @@ async function loadConstraints() {
   constraints = await optional(rpc("get_constraints", auth()));
 }
 
+// Les effets des contraintes sont accessoires aussi : sans eux (base pas encore à jour), aucun créneau n'est bloqué.
+async function loadEffects() {
+  effects = await optional(rpc("get_effects", auth()));
+}
+
+const effectOf = (k) => effects.find((e) => e.id === k.effect_id) || null;
+
+// Créneaux bloqués un jour donné par les effets des contraintes de ce jour :
+// Map "midi" | "soir" -> nom de la contrainte qui le bloque.
+function blockedSlots(date) {
+  const slots = new Map();
+  for (const id of dayConstraints.get(date) || []) {
+    const k = constraints.find((c) => c.id === id);
+    const e = k && effectOf(k);
+    if (e && e.blocked_slot) slots.set(e.blocked_slot, k.name);
+  }
+  return slots;
+}
+
 // Les ingrédients ne concernent que l'admin (liste de l'onglet Admin, suggestions des recettes).
 async function loadIngredients() {
   ingredients = role === "admin" ? await optional(rpc("get_ingredients", auth())) : [];
@@ -210,7 +235,7 @@ async function loadMeals() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadCatalog(), loadConstraints(), loadMeals(), loadIngredients()]);
+    await Promise.all([loadCatalog(), loadConstraints(), loadMeals(), loadIngredients(), loadEffects()]);
     statusEl.textContent = "";
     render();
   } catch (e) {
@@ -246,6 +271,9 @@ function button(cls, text, onClick) {
 
 function mealBlock(date, slot, editable) {
   const items = meals.get(`${date}|${slot}`) || [];
+  // Créneau bloqué par une contrainte du jour (effet) : pas de génération possible ; pour pouvoir le
+  // remplir à nouveau il faut retirer la contrainte du jour.
+  const blocked = blockedSlots(date).has(slot);
   const box = el("div", "meal");
   const head = el("div", "meal-head");
   head.append(el("span", "meal-name", slot));
@@ -253,17 +281,18 @@ function mealBlock(date, slot, editable) {
   if (editable) {
     const btns = el("div", "meal-btns");
     if (items.length) {
-      btns.append(button("btn-sm", "Modifier", () => openMeal(date, slot)));
+      // Un repas déjà rempli sur un créneau bloqué (antérieur à la règle) ne peut plus qu'être vidé.
+      if (!blocked) btns.append(button("btn-sm", "Modifier", () => openMeal(date, slot)));
       btns.append(button("btn-sm danger", "Vider", () => clearMeal(date, slot)));
-    } else {
+    } else if (!blocked) {
       btns.append(button("btn-sm", "Générer repas manuel", () => openMeal(date, slot)));
     }
-    head.append(btns);
+    if (btns.children.length) head.append(btns);
   }
   box.append(head);
 
   if (!items.length) {
-    box.append(el("p", "meal-empty", "vide"));
+    box.append(el("p", "meal-empty", blocked ? "pas de repas" : "vide"));
     return box;
   }
   // Les aliments qui ont exactement les mêmes classes sont regroupés sur une ligne
@@ -648,7 +677,8 @@ function openDayConstraints(date) {
   daySave.disabled = false;
   let box = null;
   if (constraints.length) {
-    box = checkBoxes(constraints, new Set(before));
+    // Une contrainte qui a un effet l'indique à côté de son nom.
+    box = checkBoxes(constraints.map((k) => ({ id: k.id, name: k.name, meta: (effectOf(k) || {}).name })), new Set(before));
     dayChecks.replaceChildren(box);
   } else {
     dayChecks.replaceChildren(el("p", "empty", "Aucune contrainte n'est définie. Un admin peut en créer dans l'onglet Admin."));
@@ -693,6 +723,7 @@ function checkBoxes(items, selected) {
     cb.value = it.id;
     cb.checked = selected.has(it.id);
     label.append(cb, document.createTextNode(it.name));
+    if (it.meta) label.append(el("small", "check-meta", it.meta));
     box.append(label);
   }
   box.values = () => [...box.querySelectorAll("input:checked")].map((i) => Number(i.value));
@@ -1008,6 +1039,38 @@ $("ingredient-save").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------- Admin : gestion des contraintes
+// Choix de l'effet d'une contrainte : « Aucun effet » et un choix par effet existant, exclusifs. La
+// description de chaque effet est écrite sous son nom (lisible sans survol, smartphone compris).
+// choice.value() renvoie l'identifiant de l'effet choisi, ou null.
+let effectChoiceCount = 0;
+function effectChoice(selectedId) {
+  const box = el("div", "effect-choice");
+  box.value = () => null;
+  if (!effects.length) { box.hidden = true; return box; } // base pas encore à jour : pas d'effets
+  const group = `effect-${effectChoiceCount++}`;
+  const options = [{ id: null, name: "Aucun effet", description: "La contrainte est purement informative." }, ...effects];
+  for (const o of options) {
+    const label = el("label", "effect-opt");
+    const radio = el("input");
+    radio.type = "radio";
+    radio.name = group;
+    radio.value = o.id === null ? "" : String(o.id);
+    radio.checked = o.id === (selectedId === undefined ? null : selectedId);
+    const text = el("span", "effect-text");
+    text.append(el("span", "effect-name", o.name), el("small", "check-meta", o.description));
+    label.append(radio, text);
+    box.append(label);
+  }
+  box.value = () => {
+    const c = box.querySelector("input:checked");
+    return c && c.value !== "" ? Number(c.value) : null;
+  };
+  return box;
+}
+
+// Paramètre « effet » des appels : omis tant que la base n'a pas les effets (ancienne signature).
+const effectArg = (eid) => (effects.length ? { eid } : {});
+
 function renderConstraintsAdmin(root) {
   const addForm = el("form", "add-form");
   const addRow = el("div", "add-row");
@@ -1019,14 +1082,15 @@ function renderConstraintsAdmin(root) {
   const addBtn = el("button", "btn-primary", "Ajouter");
   addBtn.type = "submit";
   addRow.append(addInput, addBtn);
-  addForm.append(addRow);
+  const addEffect = effectChoice(null);
+  addForm.append(addRow, addEffect);
   addForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = addInput.value.trim();
     if (!name) return;
     addBtn.disabled = true;
     try {
-      await rpc("add_constraint", { ...auth(), n: name });
+      await rpc("add_constraint", { ...auth(), n: name, ...effectArg(addEffect.value()) });
       statusEl.textContent = "";
       await loadConstraints();
       render();
@@ -1060,7 +1124,18 @@ function renderConstraintsAdmin(root) {
       const li = el("li", "food-row");
       const name = el("span", "fname", k.name);
       const uses = Number(k.uses) || 0;
+      // L'effet de la contrainte : une pastille à droite du nom. Survol (ordinateur) : infobulle ; clic ou
+      // appui (smartphone compris) : la description s'affiche sous le nom, un second appui la masque.
+      const eff = effectOf(k);
+      let desc = null;
+      if (eff) {
+        const pill = button("cls-pill effect-pill", eff.name, () => desc.classList.toggle("open"));
+        pill.title = eff.description;
+        name.append(pill);
+        desc = el("small", "fmeta effect-desc", eff.description);
+      }
       name.append(el("small", "fmeta", uses ? `attribuée à ${uses} jour${uses > 1 ? "s" : ""}` : "non attribuée"));
+      if (desc) name.append(desc);
       li.append(name);
       li.append(button("btn-sm", "Modifier", () => openConstraintEdit(k)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteConstraint(k)));
@@ -1097,10 +1172,13 @@ const constraintDialog = $("constraint-dialog");
 const constraintError = $("constraint-error");
 const constraintName = $("constraint-name");
 let editingConstraint = null;
+let editEffect = null;
 
 function openConstraintEdit(k) {
   editingConstraint = k;
   constraintName.value = k.name;
+  editEffect = effectChoice(k.effect_id === undefined ? null : k.effect_id);
+  $("constraint-effects").replaceChildren(editEffect);
   constraintError.textContent = "";
   constraintDialog.showModal();
   constraintName.focus();
@@ -1115,17 +1193,28 @@ constraintName.addEventListener("keydown", (e) => {
 $("constraint-save").addEventListener("click", async () => {
   const name = constraintName.value.trim();
   if (!name) { constraintError.textContent = errorText({ code: "invalid_name" }); return; }
-  if (name === editingConstraint.name) { constraintDialog.close(); return; }
+  const eid = editEffect.value();
+  const oldEid = editingConstraint.effect_id === undefined ? null : editingConstraint.effect_id;
+  if (name === editingConstraint.name && eid === oldEid) { constraintDialog.close(); return; }
   const btn = $("constraint-save");
   btn.disabled = true;
   try {
-    await rpc("update_constraint", { ...auth(), cid: editingConstraint.id, n: name });
+    await rpc("update_constraint", { ...auth(), cid: editingConstraint.id, n: name, ...effectArg(eid) });
     constraintDialog.close();
     statusEl.textContent = "";
     await loadConstraints();
     render();
   } catch (e) {
-    fail(e, constraintError);
+    if (e.code === "effect_conflict") {
+      // L'effet bloquerait des repas déjà remplis : on montre les jours concernés.
+      const { n, slot, items } = usageOf(e);
+      constraintDialog.close();
+      showUsage("Modification impossible", name,
+        `Cette contrainte est attribuée à ${n || items.length} jour(s) dont le repas du ${slot} est déjà rempli. Videz ces repas avant de lui donner cet effet.`,
+        items.map((d) => fmtDay(d)));
+    } else {
+      fail(e, constraintError);
+    }
   }
   btn.disabled = false;
 });

@@ -158,6 +158,19 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .food-row:last-child { border-bottom: 0; }
 .food-row .fname { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+/* Effet d'une contrainte : choix exclusif avec la description sous chaque nom, et pastille dans la liste. */
+.effect-choice { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; padding: 2px 6px; }
+.effect-opt { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.effect-opt input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.effect-text { display: flex; flex-direction: column; min-width: 0; }
+.effect-name { font-size: .95rem; }
+.check-meta { color: var(--ink-soft); font-size: .78rem; margin-left: 4px; }
+.effect-text .check-meta { margin-left: 0; }
+.food-row .effect-pill { font-family: inherit; cursor: pointer; }
+.food-row .effect-pill:hover { border-color: var(--accent); color: var(--accent-dark); }
+.food-row .fname small.fmeta.effect-desc { display: none; }
+.food-row .fname small.fmeta.effect-desc.open { display: block; }
+
 /* Suppression refusée : liste de ce qui utilise l'élément. */
 .usage-name { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
 .usage-list { margin: 8px 0 4px; padding: 8px 12px 8px 30px; max-height: 40dvh; overflow-y: auto; background: var(--bg); border-radius: 14px; }
