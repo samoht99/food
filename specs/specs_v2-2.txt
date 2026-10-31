@@ -1,0 +1,56 @@
+SPECIFICATIONS (v2-2) : effets des contraintes de jour
+
+Ce fichier ne contient que les nouveautés et les modifications par rapport à la v1 (specs_v1-8) et à la v2-1. Tout ce qui n'est pas mentionné ici est inchangé.
+
+***** Contexte
+
+Jusqu'ici une contrainte de jour est purement informative (v1 5-7). Cette version permet d'associer un effet à une contrainte : si elle est attribuée à un jour, quelque chose devient impossible pour ce jour. Premiers effets : pas de repas le midi, pas de repas le soir. D'autres effets (génération automatique de repas) viendront plus tard.
+
+***** Modèle de données
+
+1- effets
+1-1- les effets sont stockés dans une table à part (effects). Un effet a : un nom (affiché dans une pastille, unique), une description en texte simple et explicite qui permet de comprendre l'effet, et un créneau bloqué (midi, soir ou aucun). Le créneau bloqué est la donnée technique que la base utilise : renommer un effet ou reformuler sa description ne change donc aucun comportement
+1-2- deux effets au départ :
+1-2-1- "Pas de repas le midi" : "Aucun repas ne peut être généré pour le midi de ce jour." (créneau bloqué : midi)
+1-2-2- "Pas de repas le soir" : "Aucun repas ne peut être généré pour le soir de ce jour." (créneau bloqué : soir)
+1-3- les effets se créent, se modifient et se suppriment uniquement en SQL (comme les classes) : le site permet seulement de choisir un effet parmi ceux qui existent. Un effet attribué à au moins une contrainte ne peut pas être supprimé
+1-4- chaque contrainte a un seul effet ou aucun (colonne effect_id de la table des contraintes, qui pointe vers la table des effets). Une contrainte sans effet reste purement informative. Les contraintes existantes n'ont aucun effet tant que l'admin ne leur en donne pas
+1-5- pour bloquer le midi et le soir d'un même jour, on attribue au jour deux contraintes (ex. "Resto midi" et "Resto soir"), un jour pouvant avoir plusieurs contraintes
+
+2- règle de blocage
+2-1- un repas ne peut pas être rempli (génération manuelle, copie) si le jour a au moins une contrainte dont l'effet bloque ce créneau. La règle est vérifiée par la base, pas seulement par l'interface (erreur slot_blocked). Vider un repas reste toujours possible
+2-2- pour pouvoir remplir à nouveau un créneau bloqué, il faut retirer la contrainte du jour
+2-3- conflits avec un repas déjà rempli (aucune donnée n'est modifiée ni supprimée automatiquement) :
+2-3-1- attribuer à un jour une contrainte qui bloque un créneau dont le repas est déjà rempli est refusé, avec un message qui demande de vider d'abord ce repas (erreur meal_in_blocked_slot). Cela ne concerne que les contraintes nouvellement ajoutées au jour (une contrainte déjà attribuée n'est pas revérifiée quand on modifie les autres contraintes du jour)
+2-3-2- donner (ou changer) un effet bloquant à une contrainte déjà attribuée à des jours dont le repas de ce créneau est rempli est refusé, avec la liste de ces jours (erreur effect_conflict) : il faut d'abord vider ces repas
+2-4- les mêmes jours que pour les repas sont concernés (15 derniers jours à +30 jours, v1 2-7)
+
+3- journal d'audit
+3-1- pour les actions constraint_add, constraint_update et constraint_delete, l'état avant / après passe d'un simple nom à { name, effect } (effect : le nom de l'effet, ou null). Changer l'effet d'une contrainte est consigné comme une modification (constraint_update). Les anciennes lignes gardent leur ancien format (simple nom)
+
+***** Expérience utilisateur
+
+1- Onglet Repas et page d'accueil
+1-1- un repas dont le créneau est bloqué par une contrainte du jour affiche "pas de repas" à la place de "vide", sans bouton « Générer repas manuel ». Les étiquettes de contraintes du jour (en haut à droite) restent affichées, donc on voit laquelle bloque
+1-2- si un repas rempli se trouve déjà sur un créneau bloqué (donnée antérieure à la règle), il reste affiché et seul le bouton « Vider » est proposé
+1-3- dans le popup des contraintes d'un jour, une contrainte qui a un effet l'indique à côté de son nom (ex. "Resto midi · Pas de repas le midi")
+
+2- Onglet Admin, partie Contraintes
+2-1- l'ajout et la modification d'une contrainte comportent un choix d'effet : "Aucun effet" (par défaut) et un choix par effet existant, exclusifs. La description de chaque effet est écrite sous son nom, donc lisible sans survol (smartphone compris)
+2-2- dans la liste, une contrainte qui a un effet l'indique par une pastille à droite de son nom (le nom de l'effet). Au survol (ordinateur) la description s'affiche en infobulle ; au clic ou à l'appui (smartphone ou ordinateur) la description s'affiche sous le nom de la contrainte, un second appui la masque
+2-3- les filtres, la recherche et l'indication d'utilisation (v2-1) sont inchangés
+
+3- Messages d'erreur (nouveaux)
+3-1- remplir un créneau bloqué : "Ce repas est bloqué par une contrainte du jour : retirez-la pour pouvoir le remplir."
+3-2- attribuer une contrainte bloquante à un jour dont le repas est rempli : "Le repas du midi (ou du soir) de ce jour est rempli : videz-le avant d'attribuer cette contrainte."
+3-3- donner un effet bloquant à une contrainte attribuée à des jours dont le repas est rempli : fenêtre « Modification impossible » avec la liste des jours (même présentation que « Suppression impossible », v2-1 2-5)
+3-4- effet qui n'existe plus : "Un effet sélectionné n'existe plus. Rechargez la page."
+
+***** Droits
+
+1- la liste des effets est lisible par tous les rôles (l'onglet Repas en a besoin pour savoir quels créneaux sont bloqués). Seul l'admin choisit l'effet d'une contrainte
+
+***** Détails techniques
+
+1- migration 009 : table des effets (et les 2 effets de départ), colonne effect_id des contraintes, fonctions get_effects (nouvelle), get_constraints, add_constraint, update_constraint, delete_constraint, set_meal et set_day_constraints (adaptées). Pour que le site reste utilisable pendant la mise à jour, le site fonctionne aussi avant la migration (sans effets)
+2- schema.sql est mis à jour. La fausse API du dossier test est mise à jour. Branche de travail : v2

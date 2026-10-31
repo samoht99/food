@@ -55,7 +55,13 @@
 
   const meals = new Map(); // "date|slot" -> [food ids]
   let nextConId = 1;
-  let constraints = ["Télétravail", "Repas au bureau", "Invités", "Sans viande"].map((name) => ({ id: nextConId++, name }));
+  // Effets possibles d'une contrainte (liste fixe, gérée en SQL) : nom, description, créneau bloqué.
+  const effects = [
+    { id: 1, name: "Pas de repas le midi", description: "Aucun repas ne peut être généré pour le midi de ce jour.", blocked_slot: "midi" },
+    { id: 2, name: "Pas de repas le soir", description: "Aucun repas ne peut être généré pour le soir de ce jour.", blocked_slot: "soir" },
+  ];
+  let constraints = ["Télétravail", "Repas au bureau", "Invités", "Sans viande"].map((name) => ({ id: nextConId++, name, effect_id: null }));
+  constraints.push({ id: nextConId++, name: "Resto midi", effect_id: 1 }, { id: nextConId++, name: "Resto soir", effect_id: 2 });
   const dayCons = new Map(); // "date" -> [ids de contraintes]
   const users = { reader: ["r", "read"], writer: ["w", "write"], admin: ["a", "admin"] };
 
@@ -75,6 +81,8 @@
   put(1, "soir", ["sandwich jambon-salade", "pomme"]);
   dayCons.set(addDays(t, 0), [1]);
   dayCons.set(addDays(t, 1), [3, 4]);
+  dayCons.set(addDays(t, 3), [5]); // Resto midi : pas de repas le midi
+  dayCons.set(addDays(t, 4), [6]); // Resto soir : pas de repas le soir
   dayCons.set(addDays(t, -20), [2]); // hors des 15 jours affichés
   put(-20, "midi", ["poisson", "riz", "courgette", "yaourt"]); // hors des 15 jours affichés, encore en base
 
@@ -86,6 +94,10 @@
     json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
   });
   const inWindow = (d) => d >= addDays(zurichToday(), -15) && d <= addDays(zurichToday(), 30);
+  const slotOfEffect = (eid) => (effects.find((e) => e.id === eid) || {}).blocked_slot || null;
+  // Créneaux bloqués un jour donné par les effets des contraintes de ce jour.
+  const blockedSlots = (d) => new Set((dayCons.get(d) || [])
+    .map((id) => slotOfEffect(constraints.find((k) => k.id === id).effect_id)).filter(Boolean));
   const clean = (n) => String(n || "").trim().toLowerCase();
 
   window.fetch = async (url, opts) => {
@@ -125,10 +137,16 @@
         return ok(rows);
       }
 
+      case "get_effects":
+        return ok(effects);
+
       case "get_constraints":
         return ok([...constraints]
           .sort((x, y) => x.name.localeCompare(y.name, "fr"))
-          .map((k) => ({ id: k.id, name: k.name, uses: [...dayCons.values()].filter((ids) => ids.includes(k.id)).length })));
+          .map((k) => ({
+            id: k.id, name: k.name, effect_id: k.effect_id,
+            uses: [...dayCons.values()].filter((ids) => ids.includes(k.id)).length,
+          })));
 
       case "get_day_constraints": {
         const rows = [];
@@ -144,6 +162,12 @@
         if (!inWindow(a.d)) return fail("out_of_window");
         const ids = [...new Set(a.cids || [])];
         if (ids.some((id) => !constraints.some((k) => k.id === id))) return fail("unknown_constraint");
+        // Une contrainte nouvellement ajoutée qui bloque un créneau dont le repas est déjà rempli est refusée.
+        const before = dayCons.get(a.d) || [];
+        for (const id of ids.filter((x) => !before.includes(x))) {
+          const slot = slotOfEffect(constraints.find((k) => k.id === id).effect_id);
+          if (slot && meals.has(`${a.d}|${slot}`)) return fail("meal_in_blocked_slot", slot);
+        }
         if (ids.length) dayCons.set(a.d, ids);
         else dayCons.delete(a.d);
         return voidOk();
@@ -154,7 +178,9 @@
         const name = String(a.n || "").trim();
         if (!name || name.length > 60) return fail("invalid_name");
         if (constraints.some((k) => k.name.toLowerCase() === name.toLowerCase())) return fail("constraint_exists");
-        constraints.push({ id: nextConId++, name });
+        const eid = a.eid === undefined ? null : a.eid;
+        if (eid !== null && !effects.some((e) => e.id === eid)) return fail("unknown_effect");
+        constraints.push({ id: nextConId++, name, effect_id: eid });
         return ok(nextConId - 1);
       }
 
@@ -165,7 +191,17 @@
         if (!name || name.length > 60) return fail("invalid_name");
         if (!k) return fail("unknown_constraint");
         if (constraints.some((x) => x.id !== a.cid && x.name.toLowerCase() === name.toLowerCase())) return fail("constraint_exists");
+        const eid = a.eid === undefined ? null : a.eid;
+        if (eid !== null && !effects.some((e) => e.id === eid)) return fail("unknown_effect");
+        // Un effet bloquant est refusé si la contrainte est attribuée à des jours dont ce repas est rempli.
+        const slot = eid !== k.effect_id ? slotOfEffect(eid) : null;
+        if (slot) {
+          const days = [...dayCons].filter(([d, ids]) => ids.includes(a.cid) && meals.has(`${d}|${slot}`))
+            .map(([d]) => d).sort().reverse();
+          if (days.length) return fail("effect_conflict", JSON.stringify({ n: days.length, slot, items: days }));
+        }
         k.name = name;
+        k.effect_id = eid;
         return voidOk();
       }
 
@@ -183,6 +219,7 @@
         if (!inWindow(a.d)) return fail("out_of_window");
         const ids = [...new Set(a.food_ids)];
         if (ids.some((id) => !foods.some((f) => f.id === id))) return fail("unknown_food");
+        if (ids.length && blockedSlots(a.d).has(a.s)) return fail("slot_blocked"); // vider reste possible
         if (ids.length) meals.set(`${a.d}|${a.s}`, ids);
         else meals.delete(`${a.d}|${a.s}`);
         return voidOk();
