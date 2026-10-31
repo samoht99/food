@@ -171,6 +171,47 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .food-row .fname small.fmeta.effect-desc { display: none; }
 .food-row .fname small.fmeta.effect-desc.open { display: block; }
 
+/* Détail des ingrédients d'un repas (bouton « Ingrédients » sous le repas). */
+.meal-ing-toggle { display: block; margin-top: 6px; padding: 4px 0; font-size: .85rem; }
+.meal-detail { margin: 4px 0 2px; padding: 8px 12px; background: var(--card); border-radius: 12px; font-size: .88rem; }
+.md-food { margin: 8px 0 2px; font-weight: 600; overflow-wrap: anywhere; }
+.md-food:first-child { margin-top: 0; }
+.md-portions { color: var(--accent-dark); font-weight: 600; }
+.md-list { list-style: none; margin: 0; padding: 0; }
+.md-list li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.md-name { overflow-wrap: anywhere; }
+.md-qty { flex: none; color: var(--ink-soft); white-space: nowrap; }
+.md-qty.none, .md-none { color: var(--ink-soft); font-style: italic; }
+
+/* Portions d'un repas (popup de génération) : un multiplicateur par aliment. */
+.meal-portions { margin-top: 12px; }
+.portions-title { margin: 0 0 6px; font-size: .9rem; font-weight: 600; }
+.portion-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.portion-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.btn-step {
+  width: 32px; height: 32px; flex: none; border-radius: 50%; cursor: pointer; line-height: 1; font-size: 1.1rem;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
+.portion-input { width: 64px; flex: none; padding: 6px 8px; text-align: center; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+
+/* Lignes d'ingrédients d'un aliment : nom, quantité pour 1 portion, unité. */
+.ing-hint { display: block; color: var(--ink-soft); font-size: .78rem; margin: 0 0 4px 6px; }
+.ing-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.ing-row { display: flex; align-items: center; gap: 6px; }
+/* Dans le popup d'un aliment, les ingrédients prennent toute la largeur (libellé au-dessus). */
+#food-edit-ing-label, #food-edit-ingredients { grid-column: 1 / -1; }
+#food-edit-ing-label { padding-top: 6px; }
+.ing-name { flex: 1; min-width: 80px; overflow-wrap: break-word; }
+.ing-name.muted { color: var(--ink-soft); font-style: italic; }
+.ing-qty { width: 84px; flex: none; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+.ing-unit { flex: none; min-width: 62px; color: var(--ink-soft); font-size: .88rem; }
+.ing-unit select, .unit-select { padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); background: #fff; max-width: 100px; }
+.ing-del { flex: none; border: 0; background: none; color: var(--ink-soft); cursor: pointer; padding: 4px 6px; font-size: 1rem; }
+.ing-del:hover { color: #a02020; }
+.unit-row { display: flex; align-items: center; gap: 8px; margin: 4px 6px 0; font-size: .9rem; }
+.unit-row .ing-label { margin: 0; }
+.qty-missing { color: #a8741f; }
+
 /* Suppression refusée : liste de ce qui utilise l'élément. */
 .usage-name { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
 .usage-list { margin: 8px 0 4px; padding: 8px 12px 8px 30px; max-height: 40dvh; overflow-y: auto; background: var(--bg); border-radius: 14px; }
