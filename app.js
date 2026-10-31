@@ -319,8 +319,7 @@ function mealBlock(date, slot, editable) {
   for (const f of items) {
     const key = f.class_ids.join(",");
     if (!groups.has(key)) groups.set(key, { ids: f.class_ids, names: [] });
-    // Un nombre de portions différent de 1 est indiqué à côté du nom (« poulet ×1,5 »).
-    groups.get(key).names.push(f.portions === 1 ? f.name : `${f.name} ×${fmtNum(f.portions)}`);
+    groups.get(key).names.push(f.name); // les portions ne s'affichent que dans le détail « Ingrédients »
   }
   const ordered = [...groups.values()].sort(
     (a, b) => Math.min(...a.ids.map(pos)) - Math.min(...b.ids.map(pos)) || a.ids.length - b.ids.length
@@ -1021,57 +1020,9 @@ function renderFoodsAdmin(root) {
   }
   root.append(chips);
 
-  // Nouvel aliment : un nom et une ou plusieurs classes (la classe affichée est cochée d'office).
-  const addForm = el("form", "add-form");
-  const addRow = el("div", "add-row");
-  const addInput = el("input");
-  addInput.type = "text";
-  addInput.maxLength = 60;
-  addInput.placeholder = "Nouvel aliment";
-  addInput.autocomplete = "off";
-  const addBtn = el("button", "btn-primary", "Ajouter");
-  addBtn.type = "submit";
-  addRow.append(addInput, addBtn);
-  const addChecks = classChecks(new Set([adminClassId]));
-  // Ingrédients avec leur quantité pour 1 portion : un aliment simple a une seule ligne (sa quantité) ;
-  // à partir de 2 ingrédients la case Recettes se coche toute seule.
-  const startsAsRecipe = isRecipe([adminClassId]);
-  const addIngredients = ingredientEditor({
-    initial: startsAsRecipe ? [] : [{ auto: true }],
-    recipe: startsAsRecipe,
-    foodName: () => addInput.value,
-    onChange: () => syncRecipeBox(addChecks, addIngredients),
-  });
-  addChecks.addEventListener("change", (e) => {
-    if (e.target === recipeCheckbox(addChecks)) addIngredients.setRecipe(e.target.checked);
-  });
-  addInput.addEventListener("input", () => addIngredients.refreshAuto());
-  const addIngBox = el("div", "ing-box");
-  addIngBox.append(el("span", "ing-label", "Ingrédients"), addIngredients);
-  addForm.append(addRow, addChecks, addIngBox);
-  addForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = addInput.value.trim().toLowerCase();
-    if (!name) return;
-    addIngredients.flushPending();
-    const cids = addChecks.values();
-    const ings = addIngredients.payload();
-    const problem = addIngredients.error() || foodFormError(cids, ings);
-    if (problem) { statusEl.textContent = errorText({ code: problem }); return; }
-    addBtn.disabled = true;
-    try {
-      await rpc("add_food", { ...auth(), n: name, cids, ings });
-      statusEl.textContent = "";
-      await loadFoodsAndIngredients();
-      renderAdmin();
-      $("tab-admin").querySelector(".add-row input").focus();
-      return;
-    } catch (err) {
-      fail(err);
-    }
-    addBtn.disabled = false;
-  });
-  root.append(addForm);
+  // Nouvel aliment : un popup (le même que pour la modification) avec un nom, une ou plusieurs classes
+  // (la classe affichée est cochée d'office) et les ingrédients.
+  root.append(button("btn-primary admin-add", "+ Ajouter un aliment", () => openFoodDialog(null)));
 
   const search = el("input", "search");
   search.type = "search";
@@ -1105,7 +1056,7 @@ function renderFoodsAdmin(root) {
       // Pour retrouver ce qu'il reste à remplir : au moins une quantité d'ingrédient n'est pas définie.
       if ((f.ingredients || []).some((i) => i.quantity === null)) name.append(el("small", "fmeta qty-missing", "quantité à définir"));
       li.append(name);
-      li.append(button("btn-sm", "Modifier", () => openFoodEdit(f)));
+      li.append(button("btn-sm", "Modifier", () => openFoodDialog(f)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteFood(f)));
       list.append(li);
     }
@@ -1165,39 +1116,8 @@ function unitSelect(selected) {
 const unitArg = (uid) => (units.length ? { uid } : {});
 
 function renderIngredientsAdmin(root) {
-  const addForm = el("form", "add-form");
-  const addRow = el("div", "add-row");
-  const addInput = el("input");
-  addInput.type = "text";
-  addInput.maxLength = 60;
-  addInput.placeholder = "Nouvel ingrédient";
-  addInput.autocomplete = "off";
-  const addBtn = el("button", "btn-primary", "Ajouter");
-  addBtn.type = "submit";
-  addRow.append(addInput, addBtn);
-  // Unité de l'ingrédient (g par défaut) : toutes ses quantités sont exprimées dans cette unité.
-  const addUnit = unitSelect(undefined);
-  const unitRow = el("label", "unit-row");
-  unitRow.append(el("span", "ing-label", "Unité"), addUnit);
-  addForm.append(addRow, unitRow);
-  addForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = addInput.value.trim().toLowerCase();
-    if (!name) return;
-    addBtn.disabled = true;
-    try {
-      await rpc("add_ingredient", { ...auth(), n: name, ...unitArg(Number(addUnit.value)) });
-      statusEl.textContent = "";
-      await loadIngredients();
-      renderAdmin();
-      $("tab-admin").querySelector(".add-row input").focus();
-      return;
-    } catch (err) {
-      fail(err);
-    }
-    addBtn.disabled = false;
-  });
-  root.append(addForm);
+  // Nouvel ingrédient : un popup (le même que pour la modification) avec un nom et une unité.
+  root.append(button("btn-primary admin-add", "+ Ajouter un ingrédient", () => openIngredientDialog(null)));
 
   const search = el("input", "search");
   search.type = "search";
@@ -1224,7 +1144,7 @@ function renderIngredientsAdmin(root) {
       const uses = Number(i.uses) || 0;
       name.append(el("small", "fmeta", uses ? `utilisé par ${uses} aliment${uses > 1 ? "s" : ""}` : "non utilisé"));
       li.append(name);
-      li.append(button("btn-sm", "Modifier", () => openIngredientEdit(i)));
+      li.append(button("btn-sm", "Modifier", () => openIngredientDialog(i)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteIngredient(i)));
       list.append(li);
     }
@@ -1260,14 +1180,17 @@ const ingredientError = $("ingredient-error");
 const ingredientName = $("ingredient-name");
 let editingIngredient = null;
 
-function openIngredientEdit(i) {
+// Popup d'un ingrédient : i = l'ingrédient à modifier, ou null pour en ajouter un (unité : g par défaut).
+function openIngredientDialog(i) {
   editingIngredient = i;
-  ingredientName.value = i.name;
-  $("ingredient-unit").replaceChildren(unitSelect(i.unit_id));
+  $("ingredient-title").textContent = i ? "Modifier l'ingrédient" : "Nouvel ingrédient";
+  $("ingredient-save").textContent = i ? "Enregistrer" : "Ajouter";
+  ingredientName.value = i ? i.name : "";
+  $("ingredient-unit").replaceChildren(unitSelect(i ? i.unit_id : undefined));
   ingredientError.textContent = "";
   ingredientDialog.showModal();
   ingredientName.focus();
-  ingredientName.select();
+  if (i) ingredientName.select();
 }
 
 $("ingredient-cancel").addEventListener("click", () => ingredientDialog.close());
@@ -1279,6 +1202,21 @@ $("ingredient-save").addEventListener("click", async () => {
   const name = ingredientName.value.trim().toLowerCase();
   if (!name) { ingredientError.textContent = errorText({ code: "invalid_name" }); return; }
   const uid = Number($("ingredient-unit").querySelector("select").value);
+  if (!editingIngredient) {
+    const btn = $("ingredient-save");
+    btn.disabled = true;
+    try {
+      await rpc("add_ingredient", { ...auth(), n: name, ...unitArg(uid) });
+      ingredientDialog.close();
+      statusEl.textContent = "";
+      await loadIngredients();
+      renderAdmin();
+    } catch (e) {
+      fail(e, ingredientError);
+    }
+    btn.disabled = false;
+    return;
+  }
   const unitChanged = units.length > 0 && uid !== editingIngredient.unit_id;
   if (name === editingIngredient.name && !unitChanged) { ingredientDialog.close(); return; }
   // Changer l'unité ne convertit pas les quantités déjà saisies : on demande confirmation si elles existent.
@@ -1335,36 +1273,8 @@ function effectChoice(selectedId) {
 const effectArg = (eid) => (effects.length ? { eid } : {});
 
 function renderConstraintsAdmin(root) {
-  const addForm = el("form", "add-form");
-  const addRow = el("div", "add-row");
-  const addInput = el("input");
-  addInput.type = "text";
-  addInput.maxLength = 60;
-  addInput.placeholder = "Nouvelle contrainte";
-  addInput.autocomplete = "off";
-  const addBtn = el("button", "btn-primary", "Ajouter");
-  addBtn.type = "submit";
-  addRow.append(addInput, addBtn);
-  const addEffect = effectChoice(null);
-  addForm.append(addRow, addEffect);
-  addForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = addInput.value.trim();
-    if (!name) return;
-    addBtn.disabled = true;
-    try {
-      await rpc("add_constraint", { ...auth(), n: name, ...effectArg(addEffect.value()) });
-      statusEl.textContent = "";
-      await loadConstraints();
-      render();
-      $("tab-admin").querySelector(".add-row input").focus();
-      return;
-    } catch (err) {
-      fail(err);
-    }
-    addBtn.disabled = false;
-  });
-  root.append(addForm);
+  // Nouvelle contrainte : un popup (le même que pour la modification) avec un nom et un effet.
+  root.append(button("btn-primary admin-add", "+ Ajouter une contrainte", () => openConstraintDialog(null)));
 
   const search = el("input", "search");
   search.type = "search";
@@ -1400,7 +1310,7 @@ function renderConstraintsAdmin(root) {
       name.append(el("small", "fmeta", uses ? `attribuée à ${uses} jour${uses > 1 ? "s" : ""}` : "non attribuée"));
       if (desc) name.append(desc);
       li.append(name);
-      li.append(button("btn-sm", "Modifier", () => openConstraintEdit(k)));
+      li.append(button("btn-sm", "Modifier", () => openConstraintDialog(k)));
       li.append(button("btn-sm danger", "Supprimer", () => deleteConstraint(k)));
       list.append(li);
     }
@@ -1437,15 +1347,18 @@ const constraintName = $("constraint-name");
 let editingConstraint = null;
 let editEffect = null;
 
-function openConstraintEdit(k) {
+// Popup d'une contrainte : k = la contrainte à modifier, ou null pour en ajouter une (sans effet par défaut).
+function openConstraintDialog(k) {
   editingConstraint = k;
-  constraintName.value = k.name;
-  editEffect = effectChoice(k.effect_id === undefined ? null : k.effect_id);
+  $("constraint-title").textContent = k ? "Modifier la contrainte" : "Nouvelle contrainte";
+  $("constraint-save").textContent = k ? "Enregistrer" : "Ajouter";
+  constraintName.value = k ? k.name : "";
+  editEffect = effectChoice(k && k.effect_id !== undefined ? k.effect_id : null);
   $("constraint-effects").replaceChildren(editEffect);
   constraintError.textContent = "";
   constraintDialog.showModal();
   constraintName.focus();
-  constraintName.select();
+  if (k) constraintName.select();
 }
 
 $("constraint-cancel").addEventListener("click", () => constraintDialog.close());
@@ -1457,6 +1370,21 @@ $("constraint-save").addEventListener("click", async () => {
   const name = constraintName.value.trim();
   if (!name) { constraintError.textContent = errorText({ code: "invalid_name" }); return; }
   const eid = editEffect.value();
+  if (!editingConstraint) {
+    const btn = $("constraint-save");
+    btn.disabled = true;
+    try {
+      await rpc("add_constraint", { ...auth(), n: name, ...effectArg(eid) });
+      constraintDialog.close();
+      statusEl.textContent = "";
+      await loadConstraints();
+      render();
+    } catch (e) {
+      fail(e, constraintError);
+    }
+    btn.disabled = false;
+    return;
+  }
   const oldEid = editingConstraint.effect_id === undefined ? null : editingConstraint.effect_id;
   if (name === editingConstraint.name && eid === oldEid) { constraintDialog.close(); return; }
   const btn = $("constraint-save");
@@ -1488,15 +1416,19 @@ let editingFood = null;
 let editChecks = null;
 let editIngredients = null;
 
-function openFoodEdit(f) {
+// Popup d'un aliment : f = l'aliment à modifier, ou null pour en ajouter un.
+function openFoodDialog(f) {
   editingFood = f;
-  $("food-edit-name").value = f.name;
-  editChecks = classChecks(new Set(f.class_ids));
+  $("food-dialog-title").textContent = f ? "Modifier l'aliment" : "Nouvel aliment";
+  $("food-edit-save").textContent = f ? "Enregistrer" : "Ajouter";
+  $("food-edit-name").value = f ? f.name : "";
+  const classIds = f ? f.class_ids : [adminClassId]; // à l'ajout : la classe affichée est cochée d'office
+  editChecks = classChecks(new Set(classIds));
   $("food-edit-classes").replaceChildren(editChecks);
   // Ingrédients avec leur quantité pour 1 portion : un aliment simple a une seule ligne (sa quantité) ;
   // à partir de 2 ingrédients la case Recettes se coche toute seule.
-  const recipe = isRecipe(f.class_ids);
-  const own = f.ingredients || [];
+  const recipe = isRecipe(classIds);
+  const own = f ? f.ingredients || [] : [];
   editIngredients = ingredientEditor({
     initial: recipe ? own : [{ auto: true, quantity: own[0] ? own[0].quantity : null, unit_id: own[0] ? own[0].unit_id : undefined }],
     recipe,
@@ -1510,6 +1442,7 @@ function openFoodEdit(f) {
   syncRecipeBox(editChecks, editIngredients);
   foodEditError.textContent = "";
   foodDialog.showModal();
+  if (!f) $("food-edit-name").focus();
 }
 
 // La ligne « automatique » d'un aliment simple porte le nom de l'aliment, tel qu'on le saisit.
@@ -1527,7 +1460,8 @@ $("food-edit-save").addEventListener("click", async () => {
   const btn = $("food-edit-save");
   btn.disabled = true;
   try {
-    await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids, ings });
+    if (editingFood) await rpc("update_food", { ...auth(), fid: editingFood.id, n: name, cids, ings });
+    else await rpc("add_food", { ...auth(), n: name, cids, ings });
     foodDialog.close();
     statusEl.textContent = "";
     await loadAll();

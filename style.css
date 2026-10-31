@@ -212,6 +212,9 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .unit-row .ing-label { margin: 0; }
 .qty-missing { color: #a8741f; }
 
+/* Bouton d'ajout en tête des listes Admin (ouvre un popup). */
+.admin-add { width: 100%; margin: 0 0 10px; padding: 10px 14px; }
+
 /* Suppression refusée : liste de ce qui utilise l'élément. */
 .usage-name { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
 .usage-list { margin: 8px 0 4px; padding: 8px 12px 8px 30px; max-height: 40dvh; overflow-y: auto; background: var(--bg); border-radius: 14px; }
