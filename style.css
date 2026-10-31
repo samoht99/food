@@ -203,6 +203,7 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 #food-edit-ing-label { padding-top: 6px; }
 .ing-name { flex: 1; min-width: 80px; overflow-wrap: break-word; }
 .ing-name.muted { color: var(--ink-soft); font-style: italic; }
+.ing-empty { margin: 0; font-size: .9rem; color: var(--ink-soft); font-style: italic; }
 .ing-qty { width: 84px; flex: none; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
 .ing-unit { flex: none; min-width: 62px; color: var(--ink-soft); font-size: .88rem; }
 .ing-unit select, .unit-select { padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); background: #fff; max-width: 100px; }

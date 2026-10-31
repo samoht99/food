@@ -52,6 +52,9 @@ Sur une base déjà installée (v1), dans Supabase (**SQL Editor**), dans cet or
 8. Relire, adapter si besoin puis exécuter `supabase/migrations/011_units_of_existing_ingredients.sql` : il donne leur unité (pièce, ml) aux ingrédients existants qui ne se comptent pas en g. À faire avant de saisir des quantités (changer l'unité ne convertit pas les quantités déjà saisies).
 9. Dans l'onglet Admin > Aliments, saisir la quantité de base de chaque aliment (« quantité à définir » signale ceux qui manquent).
 
+10. Facultatif : exécuter `supabase/migrations/012_unit_tranche.sql` (unité « tranche » et ingrédients qui s'y comptent ; à relire avant).
+11. Exécuter `supabase/migrations/013_unlink_simple_food_ingredient.sql` : un aliment simple n'est plus lié à un ingrédient de même nom (renommer l'un ne touche plus l'autre ; l'ingrédient se choisit ou se crée à la volée). À exécuter juste après la publication du site.
+
 ## Actions réservées au SQL
 
 Le site ne permet pas ces actions, elles se font dans Supabase (**SQL Editor**) :
@@ -99,7 +102,7 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
 - Le nom d'un aliment est unique : deux noms identiques (même casse) sont refusés, même avec des classes différentes. « creme » et « crème » sont deux aliments différents. Pour une variante, créer un aliment distinct.
 - Un aliment utilisé dans un repas ne peut pas être supprimé, et on ne peut pas lui retirer de classe (on peut en ajouter). Le renommer le renomme dans tous les repas.
 - Chaque classe a un **type** : `composante` (Protéines, Féculents, Légumes, Laitages, Autres : une partie de repas, affichée dans les repas) ou `combo` (Recettes : pas de partie de repas, jamais affichée dans les repas, visible dans l'Admin). Un aliment doit avoir au moins une classe de type composante. Un aliment qui a la classe Recettes est une **recette** ; la règle « on ne peut pas retirer de classe à un aliment utilisé » ne concerne que les classes de type composante.
-- Les **ingrédients** (tables `food.ingredients` et `food.food_ingredients`) : un nom unique en minuscules, sans quantité. Un aliment simple a un seul ingrédient, de même nom, créé automatiquement ; une recette a au moins un ingrédient, saisis dans l'Admin (un ingrédient inconnu est créé à la volée). Un ingrédient ne peut pas être supprimé tant qu'un aliment l'utilise, et celui d'un aliment simple ne se renomme qu'en renommant l'aliment. Aucun nettoyage automatique : un ingrédient inutilisé reste en base jusqu'à sa suppression. Les ingrédients ne sont pas affichés dans les repas.
+- Les **ingrédients** (tables `food.ingredients` et `food.food_ingredients`) : un nom unique en minuscules, sans quantité. Tout aliment a au moins un ingrédient, de n'importe quel nom, saisi dans l'Admin (un ingrédient inconnu est créé à la volée) ; aucun lien de nom entre un aliment simple et son ingrédient. Un ingrédient ne peut pas être supprimé tant qu'un aliment l'utilise. Aucun nettoyage automatique : un ingrédient inutilisé reste en base jusqu'à sa suppression. Les ingrédients ne sont pas affichés dans les repas.
 - Dans l'onglet Admin, chaque aliment, ingrédient et contrainte indique s'il est utilisé (aliment : présent dans au moins un repas encore en base ; ingrédient : lié à au moins un aliment ; contrainte : attribuée à au moins un jour), avec un filtre Tous / Utilisés / Non utilisés.
 - Pour analyser les données, un repas passé compte les classes **actuelles** de ses aliments. Exemple, nombre de repas par classe sur les 30 derniers jours :
 
@@ -121,7 +124,7 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
   insert into food.effects (name, description, blocked_slot)
   values ('Pas de repas le midi', 'Aucun repas ne peut être généré pour le midi de ce jour.', 'midi');
   ```
-- **Quantités** : chaque ingrédient a une **unité** (table `food.units` : g, ml, pièce, c. à soupe, c. à café ; liste fixe, créée en SQL) et toutes ses quantités sont exprimées dans cette unité. Chaque lien aliment-ingrédient porte la **quantité pour 1 portion** de l'aliment (facultative : « non définie » tant qu'elle n'est pas saisie), y compris pour un aliment simple (son unique ingrédient, de même nom). Chaque aliment d'un repas a un nombre de **portions** (1 par défaut, 99 au plus, 2 décimales : 0,5, 0,75…) : la quantité d'un ingrédient dans un repas = quantité de base × portions. Le bouton « Ingrédients » de chaque repas déplie ces quantités. À partir de 2 ingrédients un aliment devient une recette (la classe Recettes est ajoutée). Pour créer une unité :
+- **Quantités** : chaque ingrédient a une **unité** (table `food.units` : g, ml, pièce, c. à soupe, c. à café ; liste fixe, créée en SQL) et toutes ses quantités sont exprimées dans cette unité. Chaque lien aliment-ingrédient porte la **quantité pour 1 portion** de l'aliment (facultative : « non définie » tant qu'elle n'est pas saisie), y compris pour un aliment simple (son unique ingrédient). Chaque aliment d'un repas a un nombre de **portions** (1 par défaut, 99 au plus, 2 décimales : 0,5, 0,75…) : la quantité d'un ingrédient dans un repas = quantité de base × portions. Le bouton « Ingrédients » de chaque repas déplie ces quantités. À partir de 2 ingrédients un aliment devient une recette (la classe Recettes est ajoutée). Pour créer une unité :
 
   ```sql
   insert into food.units (id, name, plural, position) values (6, 'tranche', 'tranches', 6);

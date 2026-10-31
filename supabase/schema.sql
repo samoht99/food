@@ -72,9 +72,9 @@ create table if not exists food.ingredients (
 );
 create index if not exists ingredients_unit_idx on food.ingredients (unit_id);
 
--- Ingrédients d'un aliment. Un aliment simple (sans classe combo) a exactement un ingrédient, de
--- même nom que lui, créé par les fonctions. Une recette (classe Recettes) a au moins un ingrédient,
--- saisis par l'admin. quantity : quantité d'ingrédient pour 1 portion de l'aliment, dans l'unité de
+-- Ingrédients d'un aliment. Tout aliment a au moins un ingrédient, de n'importe quel nom (aucun lien de
+-- nom) : un seul pour un aliment simple, 2 ou plus pour une recette (classe Recettes, ajoutée d'office
+-- à partir de 2). quantity : quantité d'ingrédient pour 1 portion de l'aliment, dans l'unité de
 -- l'ingrédient (null : non définie).
 create table if not exists food.food_ingredients (
   food_id       bigint not null references food.foods (id) on delete cascade,
@@ -859,9 +859,8 @@ $$;
 
 -- Ajoute un aliment avec une ou plusieurs classes (rôle admin uniquement). Au moins une classe de type
 -- composante. `ings` : JSON [{ name, quantity, unit_id }] (quantité pour 1 portion, facultative ; unit_id
--- seulement pour un ingrédient créé). Un aliment simple a 1 ingrédient de même nom (seules la quantité et
--- l'unité de la première ligne comptent) ; une recette a au moins 1 ingrédient ; avec 2 ingrédients ou
--- plus la classe Recettes est ajoutée d'office.
+-- seulement pour un ingrédient créé). Un aliment a au moins 1 ingrédient, de n'importe quel nom ; avec 2
+-- ingrédients ou plus la classe Recettes est ajoutée d'office.
 create or replace function food.add_food(u text, p text, n text, cids smallint[], ings jsonb default null)
 returns bigint
 language plpgsql
@@ -873,8 +872,6 @@ declare
   name_ text := lower(btrim(coalesce(n, '')));
   ids smallint[];
   lines jsonb;
-  first_row jsonb;
-  uid smallint;
   combo smallint;
   new_id bigint;
 begin
@@ -884,21 +881,14 @@ begin
   end if;
   ids := food._clean_classes(cids);
   lines := food._clean_ing_rows(ings);
-  if food._is_recipe(ids) or jsonb_array_length(lines) >= 2 then
-    if jsonb_array_length(lines) = 0 then
-      raise exception 'ingredients_required';
+  if jsonb_array_length(lines) = 0 then
+    raise exception 'ingredients_required';
+  end if;
+  if jsonb_array_length(lines) >= 2 and not food._is_recipe(ids) then
+    select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
+    if combo is not null then
+      select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
     end if;
-    if not food._is_recipe(ids) then
-      select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
-      if combo is not null then
-        select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
-      end if;
-    end if;
-  else
-    first_row := lines -> 0;
-    select i.unit_id into uid from food.ingredients i where i.name = name_;
-    uid := coalesce(uid, (first_row ->> 'unit_id')::smallint, food._default_unit());
-    lines := jsonb_build_array(jsonb_build_object('name', name_, 'quantity', first_row -> 'quantity', 'unit_id', uid));
   end if;
   if exists (select 1 from food.foods where name = name_) then
     raise exception 'food_exists';
@@ -932,8 +922,6 @@ declare
   old_rows jsonb;
   lines jsonb;
   new_rows jsonb;
-  first_row jsonb;
-  uid smallint;
   combo smallint;
 begin
   r := food._check(u, p, array['admin']);
@@ -946,21 +934,14 @@ begin
   end if;
   ids := food._clean_classes(cids);
   lines := food._clean_ing_rows(ings);
-  if food._is_recipe(ids) or jsonb_array_length(lines) >= 2 then
-    if jsonb_array_length(lines) = 0 then
-      raise exception 'ingredients_required';
+  if jsonb_array_length(lines) = 0 then
+    raise exception 'ingredients_required';
+  end if;
+  if jsonb_array_length(lines) >= 2 and not food._is_recipe(ids) then
+    select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
+    if combo is not null then
+      select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
     end if;
-    if not food._is_recipe(ids) then
-      select c.id into combo from food.classes c where c.type = 'combo' order by c.position, c.id limit 1;
-      if combo is not null then
-        select array_agg(distinct x order by x) into ids from unnest(ids || combo) x;
-      end if;
-    end if;
-  else
-    first_row := lines -> 0;
-    select i.unit_id into uid from food.ingredients i where i.name = name_;
-    uid := coalesce(uid, (first_row ->> 'unit_id')::smallint, food._default_unit());
-    lines := jsonb_build_array(jsonb_build_object('name', name_, 'quantity', first_row -> 'quantity', 'unit_id', uid));
   end if;
   select coalesce(array_agg(fc.class_id order by fc.class_id), '{}') into old_ids
   from food.food_classes fc where fc.food_id = fid;
@@ -1076,8 +1057,7 @@ $$;
 
 -- Modifie le nom et l'unité d'un ingrédient (rôle admin uniquement ; uid null : l'unité ne change pas). Les
 -- aliments qui l'utilisent suivent automatiquement. Changer l'unité ne convertit pas les quantités déjà saisies.
--- Renommer est refusé si le nom existe déjà, ou si l'ingrédient est celui d'un aliment simple (il doit
--- garder le nom de son aliment).
+-- Renommer est refusé si le nom existe déjà.
 create or replace function food.update_ingredient(u text, p text, iid bigint, n text, uid smallint default null)
 returns void
 language plpgsql
@@ -1109,14 +1089,6 @@ begin
 
   -- Rien n'est écrit (ni consigné) si ni le nom ni l'unité ne changent.
   if name_ <> old_name or unit_ <> old_unit then
-    if name_ <> old_name and exists (
-         select 1 from food.food_ingredients fi
-         where fi.ingredient_id = iid
-           and not exists (select 1 from food.food_classes fc
-                           join food.classes c on c.id = fc.class_id
-                           where fc.food_id = fi.food_id and c.type = 'combo')) then
-      raise exception 'ingredient_of_simple_food';
-    end if;
     update food.ingredients set name = name_, unit_id = unit_ where id = iid;
     perform food._audit(u, r, 'ingredient_update', old_name,
                         food._ingredient_state(old_name, old_unit), food._ingredient_state(name_, unit_));
