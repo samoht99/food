@@ -171,8 +171,8 @@
 
       case "delete_constraint": {
         if (role !== "admin") return fail("forbidden");
-        const n = [...dayCons.values()].filter((ids) => ids.includes(a.cid)).length;
-        if (n) return fail("constraint_in_use", String(n));
+        const days = [...dayCons].filter(([, ids]) => ids.includes(a.cid)).map(([d]) => d).sort().reverse();
+        if (days.length) return fail("constraint_in_use", JSON.stringify({ n: days.length, items: days }));
         constraints = constraints.filter((k) => k.id !== a.cid);
         return voidOk();
       }
@@ -239,8 +239,11 @@
 
       case "delete_food": {
         if (role !== "admin") return fail("forbidden");
-        const n = [...meals.values()].filter((ids) => ids.includes(a.fid)).length;
-        if (n) return fail("food_in_use", String(n));
+        // Repas qui l'utilisent, du plus récent au plus ancien (midi avant soir) : { n, items } en JSON.
+        const items = [...meals].filter(([, ids]) => ids.includes(a.fid)).map(([k]) => k)
+          .sort((x, y) => (x.split("|")[0] === y.split("|")[0]
+            ? (x < y ? -1 : 1) : (x.split("|")[0] < y.split("|")[0] ? 1 : -1)));
+        if (items.length) return fail("food_in_use", JSON.stringify({ n: items.length, items }));
         foods = foods.filter((f) => f.id !== a.fid);
         foodIngs.delete(a.fid); // ses ingrédients restent en base (aucun nettoyage automatique)
         return voidOk();
@@ -280,8 +283,9 @@
 
       case "delete_ingredient": {
         if (role !== "admin") return fail("forbidden");
-        const n = [...foodIngs.values()].filter((ids) => ids.includes(a.iid)).length;
-        if (n) return fail("ingredient_in_use", String(n));
+        const users = [...foodIngs].filter(([, ids]) => ids.includes(a.iid))
+          .map(([fid]) => foods.find((f) => f.id === fid).name).sort();
+        if (users.length) return fail("ingredient_in_use", JSON.stringify({ n: users.length, items: users }));
         ingredients = ingredients.filter((i) => i.id !== a.iid);
         return voidOk();
       }

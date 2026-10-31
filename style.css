@@ -158,6 +158,11 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .food-row:last-child { border-bottom: 0; }
 .food-row .fname { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+/* Suppression refusée : liste de ce qui utilise l'élément. */
+.usage-name { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.usage-list { margin: 8px 0 4px; padding: 8px 12px 8px 30px; max-height: 40dvh; overflow-y: auto; background: var(--bg); border-radius: 14px; }
+.usage-list li { margin: 3px 0; overflow-wrap: anywhere; }
+
 /* Boîtes de dialogue */
 .dialog {
   border: 0; border-radius: 26px; padding: 22px 20px;

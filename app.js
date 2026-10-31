@@ -97,11 +97,22 @@ async function rpc(name, args) {
   return text ? JSON.parse(text) : null;
 }
 
+// Quand la suppression d'un aliment, d'un ingrédient ou d'une contrainte est refusée parce qu'il est
+// utilisé, la base renvoie en détail { n: nombre, items: [ce qui l'utilise] } (en texte JSON).
+function usageOf(e) {
+  try {
+    const d = JSON.parse(e.details);
+    return { n: Number(d.n) || 0, items: Array.isArray(d.items) ? d.items : [] };
+  } catch {
+    return { n: 0, items: [] };
+  }
+}
+
 function errorText(e) {
   switch (e.code) {
     case "food_exists": return "Cet aliment existe déjà.";
     case "food_in_use":
-      return `Cet aliment est utilisé dans ${e.details || "plusieurs"} repas. Retirez-le de ces repas avant de le supprimer.`;
+      return `Cet aliment est utilisé dans ${usageOf(e).n || "plusieurs"} repas. Retirez-le de ces repas avant de le supprimer.`;
     case "food_in_use_class":
       return "Cet aliment est utilisé dans des repas : vous pouvez lui ajouter des classes, mais pas en retirer.";
     case "invalid_classes": return "Choisissez au moins une classe.";
@@ -109,14 +120,14 @@ function errorText(e) {
     case "ingredients_required": return "Une recette doit avoir au moins un ingrédient.";
     case "ingredient_exists": return "Cet ingrédient existe déjà.";
     case "ingredient_in_use":
-      return `Cet ingrédient est utilisé par ${e.details || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`;
+      return `Cet ingrédient est utilisé par ${usageOf(e).n || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`;
     case "ingredient_of_simple_food": return "Cet ingrédient est celui d'un aliment simple : renommez plutôt l'aliment.";
     case "unknown_ingredient": return "Un ingrédient sélectionné n'existe plus. Rechargez la page.";
     case "unknown_class": return "Une classe sélectionnée n'existe plus. Rechargez la page.";
     case "invalid_name": return "Le nom est invalide (1 à 60 caractères).";
     case "constraint_exists": return "Cette contrainte existe déjà.";
     case "constraint_in_use":
-      return `Cette contrainte est attribuée à ${e.details || "plusieurs"} jour(s). Retirez-la de ces jours avant de la supprimer.`;
+      return `Cette contrainte est attribuée à ${usageOf(e).n || "plusieurs"} jour(s). Retirez-la de ces jours avant de la supprimer.`;
     case "unknown_constraint": return "Une contrainte sélectionnée n'existe plus. Rechargez la page.";
     case "out_of_window": return "Ce jour n'est pas modifiable.";
     case "unknown_food": return "Un aliment sélectionné n'existe plus. Rechargez la page.";
@@ -833,16 +844,42 @@ function renderFoodsAdmin(root) {
   fill();
 }
 
+// ------------------------------------------- Suppression refusée : qu'est-ce qui l'utilise ?
+// Fenêtre d'information (un seul bouton) qui liste les repas, aliments ou jours qui utilisent
+// l'élément qu'on voulait supprimer.
+const usageDialog = $("usage-dialog");
+closeOnBackdrop(usageDialog);
+$("usage-close").addEventListener("click", () => usageDialog.close());
+
+function showUsage(title, name, hint, lines) {
+  $("usage-title").textContent = title;
+  $("usage-name").textContent = name;
+  $("usage-hint").textContent = hint;
+  $("usage-list").replaceChildren(...lines.map((t) => el("li", "", t)));
+  usageDialog.showModal();
+}
+
+// Un élément utilisé ne peut pas être supprimé : inutile de demander une confirmation, on
+// tente la suppression (la base refuse et renvoie la liste) et on montre ce qui l'utilise.
 async function deleteFood(f) {
-  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet aliment ?", f.name);
-  if (!ok) return;
+  if (!(Number(f.uses) > 0)) {
+    const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet aliment ?", f.name);
+    if (!ok) return;
+  }
   try {
     await rpc("delete_food", { ...auth(), fid: f.id });
     statusEl.textContent = "";
     await loadFoodsAndIngredients();
     renderAdmin();
   } catch (e) {
-    fail(e);
+    if (e.code === "food_in_use") {
+      const { n, items } = usageOf(e);
+      showUsage("Suppression impossible", f.name,
+        `Cet aliment est utilisé dans ${n || items.length || "plusieurs"} repas. Retirez-le de ces repas avant de le supprimer.`,
+        items.map((it) => { const [d, slot] = it.split("|"); return `${fmtDay(d)} · ${slot}`; }));
+    } else {
+      fail(e);
+    }
   }
 }
 
@@ -912,15 +949,24 @@ function renderIngredientsAdmin(root) {
 }
 
 async function deleteIngredient(i) {
-  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet ingrédient ?", i.name);
-  if (!ok) return;
+  if (!(Number(i.uses) > 0)) {
+    const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cet ingrédient ?", i.name);
+    if (!ok) return;
+  }
   try {
     await rpc("delete_ingredient", { ...auth(), iid: i.id });
     statusEl.textContent = "";
     await loadIngredients();
     renderAdmin();
   } catch (e) {
-    fail(e);
+    if (e.code === "ingredient_in_use") {
+      const { n, items } = usageOf(e);
+      showUsage("Suppression impossible", i.name,
+        `Cet ingrédient est utilisé par ${n || items.length || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`,
+        items);
+    } else {
+      fail(e);
+    }
   }
 }
 
@@ -1026,15 +1072,24 @@ function renderConstraintsAdmin(root) {
 }
 
 async function deleteConstraint(k) {
-  const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cette contrainte ?", k.name);
-  if (!ok) return;
+  if (!(Number(k.uses) > 0)) {
+    const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cette contrainte ?", k.name);
+    if (!ok) return;
+  }
   try {
     await rpc("delete_constraint", { ...auth(), cid: k.id });
     statusEl.textContent = "";
     await loadConstraints();
     render();
   } catch (e) {
-    fail(e);
+    if (e.code === "constraint_in_use") {
+      const { n, items } = usageOf(e);
+      showUsage("Suppression impossible", k.name,
+        `Cette contrainte est attribuée à ${n || items.length || "plusieurs"} jour(s). Retirez-la de ces jours avant de la supprimer.`,
+        items.map((d) => fmtDay(d)));
+    } else {
+      fail(e);
+    }
   }
 }
 
@@ -1165,6 +1220,7 @@ function lock() {
   mealDialog.open && mealDialog.close();
   foodDialog.open && foodDialog.close();
   ingredientDialog.open && ingredientDialog.close();
+  usageDialog.open && usageDialog.close();
   app.hidden = true;
   todayBtn.hidden = true;
   gate.hidden = false;
