@@ -8,7 +8,7 @@
 // - get_meals : une colonne portions en plus (multiplicateur de l'aliment dans le repas, 1 par défaut)
 // - set_meal(food_ids, portions) : portions = tableau parallèle à food_ids (> 0, 99 au plus, 2 décimales)
 // - add_food / update_food(ings) : ings = [{ name, quantity, unit_id }] (unit_id : seulement pour un ingrédient créé)
-//   aliment simple : 1 ingrédient (nom ignoré = nom de l'aliment) ; 2 ingrédients ou plus : la classe Recettes est ajoutée
+//   tout aliment a au moins 1 ingrédient, de n'importe quel nom (plus de lien de nom) ; 2 ingrédients ou plus : la classe Recettes est ajoutée
 // - get_ingredients : unit_id en plus ; add_ingredient(uid) ; update_ingredient(uid)
 (() => {
   try { localStorage.removeItem("food_session"); sessionStorage.removeItem("food_session"); } catch {}
@@ -50,7 +50,7 @@
   foods.push({ id: nextId++, name: "lasagnes", class_ids: [1, 2, RECIPES] }); // recette
   const byName = (n) => foods.find((f) => f.name === n).id;
 
-  // Ingrédients : un aliment simple a un ingrédient de même nom ; une recette a ceux qu'on lui donne.
+  // Ingrédients : un aliment a les ingrédients qu'on lui donne (aucun lien de nom avec l'aliment ; seuls les noms de ce tableau diffèrent).
   // Chaque lien aliment-ingrédient porte la quantité pour 1 portion (dans l'unité de l'ingrédient).
   let nextIngId = 1;
   let ingredients = []; // [{ id, name, unit_id }]
@@ -71,6 +71,8 @@
     yaourt: [1, PIECE], "fromage blanc": [100, G], emmental: [30, G],
     pomme: [1, PIECE], banane: [1, PIECE], poire: [1, PIECE], orange: [1, PIECE], pizza: [1, PIECE],
   };
+  // Aliments simples dont l'ingrédient a un autre nom que l'aliment.
+  const seedIngName = { pizza: "pâte à pizza", "pomme de terre": "pommes de terre" };
   const recipeSeed = {
     "sandwich jambon-salade": [
       { name: "pain", quantity: 2, unit_id: PIECE }, { name: "jambon", quantity: 40, unit_id: G },
@@ -83,7 +85,7 @@
   };
   for (const f of foods) {
     if (isRecipe(f.class_ids)) setIngredients(f.id, recipeSeed[f.name]);
-    else { const [quantity, unit_id] = simpleSeed[f.name]; setIngredients(f.id, [{ name: f.name, quantity, unit_id }]); }
+    else { const [quantity, unit_id] = simpleSeed[f.name]; setIngredients(f.id, [{ name: seedIngName[f.name] || f.name, quantity, unit_id }]); }
   }
   ingredientId("basilic"); // ingrédient inutilisé (pour essayer le filtre)
 
@@ -102,17 +104,13 @@
     }
     return rows;
   };
-  // Règle des ingrédients d'un aliment : simple (1 ingrédient de même nom) ou recette (2 ingrédients
-  // ou plus => la classe Recettes est ajoutée d'office). Renvoie { rows, cids } ou { error }.
+  // Règle des ingrédients d'un aliment : au moins 1 ingrédient ; 2 ingrédients ou plus => la classe Recettes
+  // est ajoutée d'office. Renvoie { rows, cids } ou { error }.
   const foodIngredients = (name, cids, ings) => {
     const rows = cleanIngs(ings);
     if (typeof rows === "string") return { error: rows };
-    if (isRecipe(cids) || rows.length >= 2) {
-      if (!rows.length) return { error: "ingredients_required" };
-      return { rows, cids: isRecipe(cids) ? cids : [...cids, RECIPES].sort((x, y) => x - y) };
-    }
-    const first = rows[0] || {};
-    return { rows: [{ name, quantity: first.quantity === undefined ? null : first.quantity, unit_id: first.unit_id || G }], cids };
+    if (!rows.length) return { error: "ingredients_required" };
+    return { rows, cids: isRecipe(cids) || rows.length < 2 ? cids : [...cids, RECIPES].sort((x, y) => x - y) };
   };
   const usedIn = (fid) => [...meals.values()].filter((items) => items.some((it) => it.id === fid)).length;
 
@@ -383,13 +381,7 @@
         const uid = a.uid === undefined || a.uid === null ? i.unit_id : a.uid;
         if (!units.some((u) => u.id === uid)) return fail("unknown_unit");
         if (ingredients.some((x) => x.id !== a.iid && x.name === name)) return fail("ingredient_exists");
-        if (name !== i.name) {
-          // L'ingrédient d'un aliment simple doit garder le nom de son aliment.
-          const ofSimpleFood = [...foodIngs].some(([fid, rows]) =>
-            linksIngredient(rows, a.iid) && !isRecipe(foods.find((f) => f.id === fid).class_ids));
-          if (ofSimpleFood) return fail("ingredient_of_simple_food");
-          i.name = name;
-        }
+        i.name = name;
         i.unit_id = uid;
         return voidOk();
       }

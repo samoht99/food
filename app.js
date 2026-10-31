@@ -119,11 +119,10 @@ function errorText(e) {
       return "Cet aliment est utilisé dans des repas : vous pouvez lui ajouter des classes, mais pas en retirer.";
     case "invalid_classes": return "Choisissez au moins une classe.";
     case "class_component_required": return "Choisissez au moins une classe d'aliment autre que Recettes.";
-    case "ingredients_required": return "Une recette doit avoir au moins un ingrédient.";
+    case "ingredients_required": return "Un aliment doit avoir au moins un ingrédient.";
     case "ingredient_exists": return "Cet ingrédient existe déjà.";
     case "ingredient_in_use":
       return `Cet ingrédient est utilisé par ${usageOf(e).n || "plusieurs"} aliment(s). Retirez-le de ces aliments avant de le supprimer.`;
-    case "ingredient_of_simple_food": return "Cet ingrédient est celui d'un aliment simple : renommez plutôt l'aliment.";
     case "unknown_ingredient": return "Un ingrédient sélectionné n'existe plus. Rechargez la page.";
     case "invalid_portions": return "Le nombre de portions doit être supérieur à 0 (99 au plus, 2 décimales au plus).";
     case "invalid_quantity": return "La quantité doit être un nombre supérieur à 0 (laissez vide si elle n'est pas définie).";
@@ -231,7 +230,7 @@ async function loadIngredients() {
   ingredients = role === "admin" ? await optional(rpc("get_ingredients", auth())) : [];
 }
 
-// Aliments et ingrédients vont ensemble : une recette crée des ingrédients, un aliment simple aussi.
+// Aliments et ingrédients vont ensemble : un aliment peut créer des ingrédients à la volée.
 const loadFoodsAndIngredients = () => Promise.all([loadCatalog(), loadIngredients()]);
 
 async function loadMeals() {
@@ -582,29 +581,21 @@ function createPicker(options, chosen, onChange, {
 }
 
 // Lignes d'ingrédients d'un aliment (ajout et modification) : nom, quantité pour 1 portion et unité.
-// - Aliment simple : une seule ligne « automatique » = l'ingrédient de même nom que l'aliment (nom non
-//   modifiable, ligne non supprimable) ; seule sa quantité se saisit.
+// - Tout aliment a au moins 1 ingrédient, de n'importe quel nom (aucun lien de nom avec l'aliment) : on le
+//   choisit dans la liste ou on le crée à la volée (on choisit alors son unité). Pour un ingrédient existant,
+//   l'unité est celle de l'ingrédient (elle se change dans l'onglet Ingrédients).
 // - Dès qu'on ajoute un 2e ingrédient, l'aliment devient une recette : onChange() laisse le formulaire
 //   cocher (et verrouiller) la case Recettes.
-// - Recette : au moins 1 ligne. Un ingrédient inconnu est créé à la volée (on choisit alors son unité) ;
-//   pour un ingrédient existant, l'unité est celle de l'ingrédient (elle se change dans l'onglet Ingrédients).
 // editor.payload() renvoie [{ name, quantity, unit_id }] ; editor.error() un code d'erreur ou null.
-// isNew : ajout d'un aliment (et non modification d'un aliment existant).
-function ingredientEditor({ initial, recipe, isNew = false, foodName, onChange }) {
+function ingredientEditor({ initial, onChange }) {
   const defaultUnit = (units[0] || {}).id;
-  const state = {
-    recipe,
-    rows: initial.map((r) => ({
-      auto: !!r.auto,
-      name: r.name || "",
-      quantity: r.quantity === null || r.quantity === undefined ? "" : String(r.quantity),
-      unit_id: r.unit_id === undefined ? defaultUnit : r.unit_id,
-    })),
-  };
+  const rows = initial.map((r) => ({
+    name: r.name,
+    quantity: r.quantity === null || r.quantity === undefined ? "" : String(r.quantity),
+    unit_id: r.unit_id === undefined ? defaultUnit : r.unit_id,
+  }));
   const known = (name) => ingredients.find((i) => i.name === name);
-  const autoName = () => foodName().trim().toLowerCase();
-  const nameOf = (row) => (row.auto ? autoName() : row.name);
-  const chosen = new Map(state.rows.filter((r) => !r.auto).map((r) => [r.name, { id: r.name, name: r.name }]));
+  const chosen = new Map(rows.map((r) => [r.name, { id: r.name, name: r.name }]));
 
   const root = el("div", "ing-editor");
   const list = el("div", "ing-rows");
@@ -620,27 +611,25 @@ function ingredientEditor({ initial, recipe, isNew = false, foodName, onChange }
   }
 
   function onPick() {
-    for (const name of [...chosen.keys()]) {
-      if (state.rows.some((r) => !r.auto && r.name === name)) continue;
-      if (name === autoName()) { chosen.delete(name); continue; } // déjà présent : l'ingrédient de même nom que l'aliment
+    for (const name of chosen.keys()) {
+      if (rows.some((r) => r.name === name)) continue;
       const k = known(name);
-      state.rows.push({ auto: false, name, quantity: "", unit_id: k ? k.unit_id : defaultUnit });
+      rows.push({ name, quantity: "", unit_id: k ? k.unit_id : defaultUnit });
     }
-    if (state.rows.length >= 2) state.recipe = true;
     changed();
   }
 
   function remove(row) {
-    state.rows = state.rows.filter((r) => r !== row);
-    if (!row.auto) chosen.delete(row.name);
+    rows.splice(rows.indexOf(row), 1);
+    chosen.delete(row.name);
     changed();
   }
 
   function renderRows() {
     list.replaceChildren();
-    for (const row of state.rows) {
+    if (!rows.length) list.append(el("p", "ing-empty muted", "Ajoutez au moins un ingrédient."));
+    for (const row of rows) {
       const line = el("div", "ing-row");
-      const name = el("span", "ing-name");
       const qty = el("input", "ing-qty");
       qty.type = "number";
       qty.min = "0";
@@ -648,33 +637,22 @@ function ingredientEditor({ initial, recipe, isNew = false, foodName, onChange }
       qty.inputMode = "decimal";
       qty.placeholder = "quantité";
       qty.value = row.quantity;
-      qty.setAttribute("aria-label", "Quantité pour 1 portion");
+      qty.setAttribute("aria-label", `Quantité de ${row.name} pour 1 portion`);
       qty.addEventListener("input", () => { row.quantity = qty.value; });
       const unitBox = el("span", "ing-unit");
-      // Le nom (et donc l'unité connue) de la ligne automatique suit le nom de l'aliment en cours de saisie.
-      row.refresh = () => {
-        const nm = nameOf(row);
-        name.textContent = nm || "(nom de l'aliment)";
-        name.classList.toggle("muted", !nm);
-        const k = known(nm);
-        unitBox.replaceChildren();
-        if (k) {
-          unitBox.append(unitOf(k.unit_id).name);
-        } else {
-          const sel = el("select");
-          for (const u of units) sel.append(new Option(u.name, u.id, false, u.id === row.unit_id));
-          sel.setAttribute("aria-label", "Unité du nouvel ingrédient");
-          sel.addEventListener("change", () => { row.unit_id = Number(sel.value); });
-          unitBox.append(sel);
-        }
-      };
-      row.refresh();
-      line.append(name, qty, unitBox);
-      if (state.recipe || !row.auto) {
-        const del = button("ing-del", "✕", () => remove(row));
-        del.setAttribute("aria-label", "Retirer cet ingrédient");
-        line.append(del);
+      const k = known(row.name);
+      if (k) {
+        unitBox.append(unitOf(k.unit_id).name);
+      } else {
+        const sel = el("select");
+        for (const u of units) sel.append(new Option(u.name, u.id, false, u.id === row.unit_id));
+        sel.setAttribute("aria-label", "Unité du nouvel ingrédient");
+        sel.addEventListener("change", () => { row.unit_id = Number(sel.value); });
+        unitBox.append(sel);
       }
+      const del = button("ing-del", "✕", () => remove(row));
+      del.setAttribute("aria-label", "Retirer cet ingrédient");
+      line.append(el("span", "ing-name", row.name), qty, unitBox, del);
       list.append(line);
     }
   }
@@ -682,40 +660,22 @@ function ingredientEditor({ initial, recipe, isNew = false, foodName, onChange }
   root.append(el("small", "ing-hint", "Quantité pour 1 portion"), list, picker.el);
   renderRows();
 
-  root.count = () => state.rows.length;
-  root.refreshAuto = () => state.rows.forEach((r) => r.auto && r.refresh && r.refresh());
-  // Appelé quand on coche ou décoche la case Recettes.
-  root.setRecipe = (on) => {
-    state.recipe = on;
-    const onlyAuto = state.rows.length === 1 && state.rows[0].auto;
-    if (on) {
-      // Recettes cochée : la ligne automatique (ingrédient de même nom que l'aliment) disparaît, la liste reste
-      // vide tant qu'on n'a pas ajouté d'ingrédient. Seule exception : un aliment existant qui devient une
-      // recette garde sa ligne si une quantité y est saisie.
-      if (onlyAuto && (isNew || state.rows[0].quantity === "")) state.rows = [];
-    } else if (!onlyAuto) {
-      // Recette redevenue aliment simple : une seule ligne automatique.
-      state.rows = [{ auto: true, name: "", quantity: "", unit_id: defaultUnit }];
-      chosen.clear();
-    }
-    picker.refresh();
-    renderRows();
-  };
+  root.count = () => rows.length;
   // Texte tapé dans le champ d'ajout mais pas encore validé : on l'ajoute pour ne pas le perdre.
   root.flushPending = () => {
     const typed = picker.pending();
-    if (typed && typed.length <= 60 && typed !== autoName() && !state.rows.some((r) => !r.auto && r.name === typed)) {
+    if (typed && typed.length <= 60 && !rows.some((r) => r.name === typed)) {
       chosen.set(typed, { id: typed, name: typed });
       onPick();
     }
     picker.clear();
   };
-  root.payload = () => state.rows.map((r) => ({
-    name: nameOf(r),
+  root.payload = () => rows.map((r) => ({
+    name: r.name,
     quantity: r.quantity === "" ? null : Number(String(r.quantity).replace(",", ".")),
     unit_id: r.unit_id,
   }));
-  root.error = () => (state.rows.some((r) => r.quantity !== "" && !(Number(r.quantity) > 0 && Number(r.quantity) <= 99999))
+  root.error = () => (rows.some((r) => r.quantity !== "" && !(Number(r.quantity) > 0 && Number(r.quantity) <= 99999))
     ? "invalid_quantity" : null);
   return root;
 }
@@ -978,7 +938,8 @@ const isRecipe = (cids) => cids.some((id) => (classes.find((c) => c.id === id) |
 function foodFormError(cids, ings) {
   if (!cids.length) return "invalid_classes";
   if (!cids.some((id) => (classes.find((c) => c.id === id) || {}).type === "composante")) return "class_component_required";
-  if (isRecipe(cids) && !ings.length) return "ingredients_required";
+  // Tout aliment a au moins 1 ingrédient (sauf tant que la base n'a pas les unités : elle crée alors celui d'un aliment simple).
+  if (!ings.length && (units.length || isRecipe(cids))) return "ingredients_required";
   return null;
 }
 
@@ -1438,29 +1399,19 @@ function openFoodDialog(f) {
   const classIds = f ? f.class_ids : [adminClassId]; // à l'ajout : la classe affichée est cochée d'office
   editChecks = classChecks(new Set(classIds));
   $("food-edit-classes").replaceChildren(editChecks);
-  // Ingrédients avec leur quantité pour 1 portion : un aliment simple a une seule ligne (sa quantité) ;
-  // à partir de 2 ingrédients la case Recettes se coche toute seule.
-  const recipe = isRecipe(classIds);
-  const own = f ? f.ingredients || [] : [];
+  // Ingrédients avec leur quantité pour 1 portion (au moins 1 pour tout aliment) ; à partir de 2 ingrédients
+  // la case Recettes se coche toute seule.
   editIngredients = ingredientEditor({
-    initial: recipe ? own : [{ auto: true, quantity: own[0] ? own[0].quantity : null, unit_id: own[0] ? own[0].unit_id : undefined }],
-    recipe,
-    isNew: !f,
-    foodName: () => $("food-edit-name").value,
+    initial: f ? f.ingredients || [] : [],
     onChange: () => syncRecipeBox(editChecks, editIngredients),
   });
   $("food-edit-ingredients").replaceChildren(editIngredients);
-  editChecks.addEventListener("change", (e) => {
-    if (e.target === recipeCheckbox(editChecks)) editIngredients.setRecipe(e.target.checked);
-  });
   syncRecipeBox(editChecks, editIngredients);
   foodEditError.textContent = "";
   foodDialog.showModal();
   if (!f) $("food-edit-name").focus();
 }
 
-// La ligne « automatique » d'un aliment simple porte le nom de l'aliment, tel qu'on le saisit.
-$("food-edit-name").addEventListener("input", () => editIngredients && editIngredients.refreshAuto());
 $("food-edit-cancel").addEventListener("click", () => foodDialog.close());
 closeOnBackdrop(foodDialog);
 $("food-edit-save").addEventListener("click", async () => {

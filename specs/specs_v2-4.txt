@@ -1,0 +1,25 @@
+Specs V2-4 : fin du lien entre un aliment simple et son ingrédient
+(nouveautés uniquement ; le reste est inchangé, voir specs V1 et V2-1 à V2-3)
+
+1- Règle des ingrédients d'un aliment
+1-1- tout aliment (simple ou recette) a au moins 1 ingrédient, de n'importe quel nom : il n'y a plus aucun lien de nom entre un aliment simple et un ingrédient
+1-2- l'ingrédient d'un aliment simple n'est plus créé automatiquement : on le choisit dans la liste des ingrédients existants ou on le crée à la volée dans le popup de l'aliment (on choisit alors son unité), comme pour une recette
+1-3- 1 seul ingrédient : aliment simple ; 2 ingrédients ou plus : la classe Recettes est ajoutée d'office (case cochée et verrouillée dans le popup), comme avant. Une recette peut avoir 1 seul ingrédient (classe Recettes cochée à la main)
+1-4- sans ingrédient, l'enregistrement est refusé (« Un aliment doit avoir au moins un ingrédient. »)
+
+2- Popup d'un aliment (ajout et modification)
+2-1- à l'ajout, la liste des ingrédients est vide (« Ajoutez au moins un ingrédient. ») ; chaque ligne a un nom, une quantité pour 1 portion, une unité et un bouton ✕ (toujours présent, plus de ligne automatique)
+2-2- cocher ou décocher Recettes ne modifie plus la liste des ingrédients
+
+3- Modification indépendante
+3-1- renommer un aliment ne change pas ses ingrédients
+3-2- renommer un ingrédient ne change pas le nom des aliments qui l'utilisent (seule la liste des ingrédients de ces aliments affiche le nouveau nom). L'erreur « ingrédient d'un aliment simple : renommez plutôt l'aliment » disparaît
+3-3- règles inchangées : nom d'aliment unique, nom d'ingrédient unique ; un ingrédient utilisé ne peut pas être supprimé (popup « Suppression impossible ») ; aucun nettoyage automatique des ingrédients inutilisés ; l'audit ne change pas
+
+4- Données existantes
+4-1- aucune donnée n'est modifiée : les aliments simples actuels gardent leur ingrédient, qui porte simplement le même nom que l'aliment pour l'instant
+
+5- Migration 013_unlink_simple_food_ingredient.sql
+5-1- remplace add_food, update_food et update_ingredient (mêmes signatures) : plus d'ingrédient créé d'après le nom de l'aliment, ingredients_required pour tout aliment sans ingrédient, plus d'erreur ingredient_of_simple_food
+5-2- schema.sql (installation neuve) reçoit les mêmes versions
+5-3- compatibilité : tant que la base n'a pas les unités (migration 010), le site garde l'ancien fonctionnement pour les aliments simples (la base crée l'ingrédient de même nom). Avant la migration 013, une base déjà en 010 continue d'imposer l'ancien lien : exécuter 013 juste après la publication du site
