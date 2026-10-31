@@ -307,3 +307,6 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .ing-qty, .portion-input { appearance: textfield; -moz-appearance: textfield; }
 .ing-qty::-webkit-outer-spin-button, .ing-qty::-webkit-inner-spin-button,
 .portion-input::-webkit-outer-spin-button, .portion-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Dans le popup d'un aliment, « .form-grid input » (plus spécifique) agrandirait la bulle de quantité. */
+.form-grid .ing-qty { flex: none; width: 72px; padding: 6px 8px; text-align: center; }
