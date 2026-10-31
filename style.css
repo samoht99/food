@@ -295,3 +295,10 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .gate-box button:disabled { opacity: .6; cursor: wait; }
 .error { color: #b00020; min-height: 1.2em; font-size: .9rem; margin: 8px 0 0; }
 .gate-box .error { margin: 0; }
+
+/* Petit écran : le nom de l'ingrédient prend sa propre ligne, les boutons − / + et la quantité dessous. */
+@media (max-width: 480px) {
+  .ing-row { flex-wrap: wrap; }
+  .ing-name { flex-basis: 100%; }
+  .ing-qty { width: 72px; }
+}

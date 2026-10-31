@@ -23,3 +23,9 @@ Specs V2-4 : fin du lien entre un aliment simple et son ingrédient
 5-1- remplace add_food, update_food et update_ingredient (mêmes signatures) : plus d'ingrédient créé d'après le nom de l'aliment, ingredients_required pour tout aliment sans ingrédient, plus d'erreur ingredient_of_simple_food
 5-2- schema.sql (installation neuve) reçoit les mêmes versions
 5-3- compatibilité : tant que la base n'a pas les unités (migration 010), le site garde l'ancien fonctionnement pour les aliments simples (la base crée l'ingrédient de même nom). Avant la migration 013, une base déjà en 010 continue d'imposer l'ancien lien : exécuter 013 juste après la publication du site
+
+6- Confort de saisie
+6-1- recherche sans accents ni majuscules : dans l'Admin (aliments, ingrédients, contraintes) et dans les listes de choix (aliments d'un repas, ingrédients d'un aliment), « pate » trouve « pâte », « creme » trouve « crème », « crême » et « créme ». Les noms enregistrés gardent leurs accents et un nom créé est enregistré tel que tapé
+6-2- popup d'un repas : les boutons − / + des portions avancent de 0,5 en 0,5 (au lieu de 0,25) ; toute autre valeur (0,25, 0,75...) se tape à la main
+6-3- popup d'un aliment : chaque ligne d'ingrédient a des boutons − / + autour de la quantité (pour 1 portion) qui avancent selon l'unité de l'ingrédient : 25 pour g et ml, 0,5 pour pièce, 1 pour tranche, c. à soupe et c. à café. Une quantité vide compte pour 0 ; − ne descend pas jusqu'à 0 ou en dessous (la quantité ne change pas). Toute granularité se tape à la main. Sur petit écran le nom de l'ingrédient prend sa propre ligne
+6-4- pour un ingrédient créé à la volée, le pas suit l'unité choisie dans la liste déroulante

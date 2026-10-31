@@ -13,6 +13,9 @@ const DAYS_AFTER = 30;
 const SLOTS = ["midi", "soir"];
 
 const $ = (id) => document.getElementById(id);
+
+// Texte de comparaison pour les recherches : minuscules et sans accents (« crème », « creme » et « créme » se valent).
+const fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const gate = $("gate");
 const gateForm = $("gate-form");
 const gateError = $("gate-error");
@@ -521,7 +524,7 @@ function createPicker(options, chosen, onChange, {
 
   function renderList() {
     const q = input.value.trim().toLowerCase();
-    shown = options.filter((o) => !chosen.has(o.id) && o.name.includes(q));
+    shown = options.filter((o) => !chosen.has(o.id) && fold(o.name).includes(fold(q)));
     if (allowNew && q && q.length <= 60 && !chosen.has(q) && !options.some((o) => o.id === q)) {
       shown.push({ id: q, name: q, isNew: true });
     }
@@ -625,6 +628,10 @@ function ingredientEditor({ initial, onChange }) {
     changed();
   }
 
+  // Pas des boutons − / + selon l'unité : 25 pour g et ml, 0,5 pour pièce, 1 pour les autres (tranche, cuillères).
+  const stepOf = (uid) => ({ g: 25, ml: 25, "pièce": 0.5 })[unitOf(uid).name] || 1;
+  const unitIdOf = (row) => { const k = known(row.name); return k ? k.unit_id : row.unit_id; };
+
   function renderRows() {
     list.replaceChildren();
     if (!rows.length) list.append(el("p", "ing-empty muted", "Ajoutez au moins un ingrédient."));
@@ -639,6 +646,15 @@ function ingredientEditor({ initial, onChange }) {
       qty.value = row.quantity;
       qty.setAttribute("aria-label", `Quantité de ${row.name} pour 1 portion`);
       qty.addEventListener("input", () => { row.quantity = qty.value; });
+      const bump = (dir) => () => {
+        const cur = Number(String(row.quantity).replace(",", ".")) || 0;
+        const v = Math.round((cur + dir * stepOf(unitIdOf(row))) * 1000) / 1000;
+        if (v > 0 && v <= 99999) { row.quantity = String(v); qty.value = row.quantity; }
+      };
+      const less = button("btn-step", "−", bump(-1));
+      const more = button("btn-step", "+", bump(1));
+      less.setAttribute("aria-label", "Diminuer la quantité");
+      more.setAttribute("aria-label", "Augmenter la quantité");
       const unitBox = el("span", "ing-unit");
       const k = known(row.name);
       if (k) {
@@ -652,7 +668,7 @@ function ingredientEditor({ initial, onChange }) {
       }
       const del = button("ing-del", "✕", () => remove(row));
       del.setAttribute("aria-label", "Retirer cet ingrédient");
-      line.append(el("span", "ing-name", row.name), qty, unitBox, del);
+      line.append(el("span", "ing-name", row.name), less, qty, more, unitBox, del);
       list.append(line);
     }
   }
@@ -714,9 +730,9 @@ function renderPortions() {
     const row = el("div", "portion-row");
     const input = el("input", "portion-input");
     input.type = "number";
-    input.min = "0.25";
+    input.min = "0.5";
     input.max = "99";
-    input.step = "0.25";
+    input.step = "0.5";
     input.inputMode = "decimal";
     input.setAttribute("aria-label", `Portions de ${f.name}`);
     input.value = portions.get(f.id);
@@ -727,7 +743,7 @@ function renderPortions() {
       const v = round2((cur > 0 ? cur : 1) + delta);
       if (v > 0 && v <= 99) { portions.set(f.id, v); input.value = v; }
     };
-    row.append(el("span", "portion-name", f.name), button("btn-step", "−", step(-0.25)), input, button("btn-step", "+", step(0.25)));
+    row.append(el("span", "portion-name", f.name), button("btn-step", "−", step(-0.5)), input, button("btn-step", "+", step(0.5)));
     box.append(row);
   }
 }
@@ -1006,7 +1022,7 @@ function renderFoodsAdmin(root) {
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
     const rows = foods
-      .filter((f) => f.class_ids.includes(adminClassId) && f.name.includes(q) && matchesUsage(f.uses))
+      .filter((f) => f.class_ids.includes(adminClassId) && fold(f.name).includes(fold(q)) && matchesUsage(f.uses))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
     list.replaceChildren();
     if (!rows.length) {
@@ -1104,7 +1120,7 @@ function renderIngredientsAdmin(root) {
   root.append(filter, list);
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
-    const rows = ingredients.filter((i) => i.name.includes(q) && matchesUsage(i.uses))
+    const rows = ingredients.filter((i) => fold(i.name).includes(fold(q)) && matchesUsage(i.uses))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
     list.replaceChildren();
     if (!rows.length) {
@@ -1261,7 +1277,7 @@ function renderConstraintsAdmin(root) {
   root.append(filter, list);
   const fill = () => {
     const q = adminSearch.trim().toLowerCase();
-    const rows = constraints.filter((k) => k.name.toLowerCase().includes(q) && matchesUsage(k.uses));
+    const rows = constraints.filter((k) => fold(k.name).includes(fold(q)) && matchesUsage(k.uses));
     list.replaceChildren();
     if (!rows.length) {
       list.append(el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucune contrainte pour le moment"));
