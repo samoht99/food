@@ -201,11 +201,11 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 /* Dans le popup d'un aliment, les ingrédients prennent toute la largeur (libellé au-dessus). */
 #food-edit-ing-label, #food-edit-ingredients { grid-column: 1 / -1; }
 #food-edit-ing-label { padding-top: 6px; }
-.ing-name { flex: 1; min-width: 80px; overflow-wrap: break-word; }
+.ing-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ing-name.muted { color: var(--ink-soft); font-style: italic; }
 .ing-empty { margin: 0; font-size: .9rem; color: var(--ink-soft); font-style: italic; }
-.ing-qty { width: 84px; flex: none; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
-.ing-unit { flex: none; min-width: 62px; color: var(--ink-soft); font-size: .88rem; }
+.ing-qty { width: 64px; flex: none; padding: 6px 8px; text-align: center; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+.ing-unit { flex: none; min-width: 44px; color: var(--ink-soft); font-size: .88rem; }
 .ing-unit select, .unit-select { padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); background: #fff; max-width: 100px; }
 .ing-del { flex: none; border: 0; background: none; color: var(--ink-soft); cursor: pointer; padding: 4px 6px; font-size: 1rem; }
 .ing-del:hover { color: #a02020; }
@@ -296,17 +296,10 @@ button.day-constraints:hover .day-chip.empty { border-color: var(--accent); colo
 .error { color: #b00020; min-height: 1.2em; font-size: .9rem; margin: 8px 0 0; }
 .gate-box .error { margin: 0; }
 
-/* Petit écran : le nom de l'ingrédient prend sa propre ligne, les boutons − / + et la quantité dessous. */
-@media (max-width: 480px) {
-  .ing-row { flex-wrap: wrap; }
-  .ing-name { flex-basis: 100%; }
-  .ing-qty { width: 72px; }
-}
-
 /* Quantités et portions : les boutons − / + remplacent les flèches natives du champ numérique. */
 .ing-qty, .portion-input { appearance: textfield; -moz-appearance: textfield; }
 .ing-qty::-webkit-outer-spin-button, .ing-qty::-webkit-inner-spin-button,
 .portion-input::-webkit-outer-spin-button, .portion-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* Dans le popup d'un aliment, « .form-grid input » (plus spécifique) agrandirait la bulle de quantité. */
-.form-grid .ing-qty { flex: none; width: 72px; padding: 6px 8px; text-align: center; }
+.form-grid .ing-qty { flex: none; width: 64px; padding: 6px 8px; text-align: center; }
