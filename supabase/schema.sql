@@ -639,12 +639,16 @@ as $$
 declare
   r text;
   n integer;
+  items jsonb;
   old_name text;
 begin
   r := food._check(u, p, array['admin']);
   select count(*) into n from food.day_constraints dc where dc.constraint_id = cid;
   if n > 0 then
-    raise exception 'constraint_in_use' using detail = n::text;
+    select coalesce(jsonb_agg(dc.day_date::text order by dc.day_date desc), '[]'::jsonb) into items
+    from food.day_constraints dc
+    where dc.constraint_id = cid;
+    raise exception 'constraint_in_use' using detail = jsonb_build_object('n', n, 'items', items)::text;
   end if;
   select k.name into old_name from food.constraints k where k.id = cid;
   if found then
@@ -765,13 +769,19 @@ as $$
 declare
   r text;
   n integer;
+  items jsonb;
   old_name text;
   old_ids smallint[];
 begin
   r := food._check(u, p, array['admin']);
   select count(*) into n from food.meal_items where food_id = fid;
   if n > 0 then
-    raise exception 'food_in_use' using detail = n::text;
+    select coalesce(jsonb_agg(m.meal_date::text || '|' || m.slot order by m.meal_date desc, m.slot), '[]'::jsonb)
+      into items
+    from food.meal_items mi
+    join food.meals m on m.id = mi.meal_id
+    where mi.food_id = fid;
+    raise exception 'food_in_use' using detail = jsonb_build_object('n', n, 'items', items)::text;
   end if;
   select f.name into old_name from food.foods f where f.id = fid;
   if found then
@@ -877,12 +887,17 @@ as $$
 declare
   r text;
   n integer;
+  items jsonb;
   old_name text;
 begin
   r := food._check(u, p, array['admin']);
   select count(*) into n from food.food_ingredients fi where fi.ingredient_id = iid;
   if n > 0 then
-    raise exception 'ingredient_in_use' using detail = n::text;
+    select coalesce(jsonb_agg(f.name order by f.name), '[]'::jsonb) into items
+    from food.food_ingredients fi
+    join food.foods f on f.id = fi.food_id
+    where fi.ingredient_id = iid;
+    raise exception 'ingredient_in_use' using detail = jsonb_build_object('n', n, 'items', items)::text;
   end if;
   select i.name into old_name from food.ingredients i where i.id = iid;
   if found then

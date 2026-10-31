@@ -46,6 +46,7 @@ Sur une base déjà installée (v1), dans Supabase (**SQL Editor**), dans cet or
    ```
 3. Exécuter `supabase/migrations/007_backfill_ingredients.sql` (crée un ingrédient de même nom pour chaque aliment qui n'est pas une recette ; peut être relancé sans risque).
 4. Dans l'onglet Admin, ouvrir chaque recette (**Modifier**) et saisir ses ingrédients (au moins 1).
+5. Exécuter `supabase/migrations/008_usage_details.sql` : quand on tente de supprimer un aliment, un ingrédient ou une contrainte utilisé(e), le site affiche la liste de ce qui l'utilise (repas, aliments ou jours).
 
 ## Actions réservées au SQL
 

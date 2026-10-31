@@ -58,6 +58,13 @@ Certains aliments d'un repas sont préparés à partir d'une recette : il faut p
 2-2- partie "Ingrédients" (même présentation que "Contraintes") : un champ d'ajout, un champ de recherche, puis la liste triée par ordre alphabétique avec, pour chaque ingrédient, son nom, "utilisé par N aliments" ou "non utilisé", un bouton modifier (popup avec le nom) et un bouton supprimer (avec confirmation)
 2-3- filtre d'utilisation : dans chaque liste (aliments d'une classe, ingrédients, contraintes), un sélecteur à trois positions "Tous" | "Utilisés" | "Non utilisés" se combine avec la recherche. Pour les aliments, il agit à l'intérieur de la classe sélectionnée. Il revient sur "Tous" quand on change de partie du sélecteur du haut
 2-4- l'indication d'utilisation se met à jour quand les repas ou les jours sont modifiés dans l'onglet Repas
+2-5- suppression d'un aliment, d'un ingrédient ou d'une contrainte qui est utilisé(e) : comme avant elle est bloquée, mais au lieu d'un simple message elle affiche ce qui l'utilise
+2-5-1- une fenêtre « Suppression impossible » indique le nom de l'élément, le message habituel (nombre d'utilisations) et la liste de ce qui l'utilise, avec un bouton « Fermer » :
+2-5-1-1- aliment : les repas qui le contiennent, un par ligne ("Mercredi 28 octobre · soir"), du plus récent au plus ancien (midi avant soir)
+2-5-1-2- ingrédient : les aliments qui l'utilisent (simples et recettes), triés par ordre alphabétique
+2-5-1-3- contrainte : les jours auxquels elle est attribuée, du plus récent au plus ancien
+2-5-2- comme la suppression est de toute façon impossible, la fenêtre s'ouvre directement (sans popup de confirmation) quand la liste indique que l'élément est utilisé. S'il n'est pas utilisé, la confirmation habituelle (v1 4-1) s'applique
+2-5-3- la liste vient de la base (elle contient aussi les repas de plus de 15 jours qui ne sont plus affichés dans l'onglet Repas, jusqu'à 30 jours dans le passé)
 
 3- Messages d'erreur (nouveaux)
 3-1- aliment sans classe de type composante : "Choisissez au moins une classe d'aliment autre que Recettes."
@@ -77,5 +84,6 @@ Certains aliments d'un repas sont préparés à partir d'une recette : il faut p
 1-2- entre les deux : l'utilisateur ajoute en SQL la classe Recettes aux aliments qui sont des recettes (requête fournie en commentaire de 006 et dans le README). Cela doit se faire avant 007, car depuis l'interface une recette exige au moins 1 ingrédient
 1-3- 007 : données. Crée un ingrédient par aliment qui n'est pas une recette et fait le lien. Peut être relancé sans risque (par exemple après avoir ajouté des aliments en SQL)
 1-4- ensuite, l'utilisateur ouvre chaque recette dans l'onglet Admin et saisit ses ingrédients. D'ici là une recette sans ingrédient reste un aliment normal dans les repas
+1-5- 008 : les suppressions refusées (aliment, ingrédient, contrainte utilisé) renvoient en plus la liste de ce qui les utilise (voir UX 2-5). À exécuter après 007 ; le détail de l'erreur devient du JSON { n, items }, sans changement de signature
 2- schema.sql est mis à jour (état final pour une installation neuve). La fausse API du dossier test est mise à jour
 3- les fonctions add_food et update_food reçoivent un paramètre supplémentaire (liste des noms d'ingrédients, ignoré pour un aliment simple). Branche de travail : v2
