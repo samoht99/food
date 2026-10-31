@@ -584,7 +584,8 @@ function createPicker(options, chosen, onChange, {
 // - Recette : au moins 1 ligne. Un ingrédient inconnu est créé à la volée (on choisit alors son unité) ;
 //   pour un ingrédient existant, l'unité est celle de l'ingrédient (elle se change dans l'onglet Ingrédients).
 // editor.payload() renvoie [{ name, quantity, unit_id }] ; editor.error() un code d'erreur ou null.
-function ingredientEditor({ initial, recipe, foodName, onChange }) {
+// isNew : ajout d'un aliment (et non modification d'un aliment existant).
+function ingredientEditor({ initial, recipe, isNew = false, foodName, onChange }) {
   const defaultUnit = (units[0] || {}).id;
   const state = {
     recipe,
@@ -683,8 +684,10 @@ function ingredientEditor({ initial, recipe, foodName, onChange }) {
     state.recipe = on;
     const onlyAuto = state.rows.length === 1 && state.rows[0].auto;
     if (on) {
-      // Aliment simple devenu recette : sa ligne automatique disparaît, sauf si une quantité y est saisie.
-      if (onlyAuto && state.rows[0].quantity === "") state.rows = [];
+      // Recettes cochée : la ligne automatique (ingrédient de même nom que l'aliment) disparaît, la liste reste
+      // vide tant qu'on n'a pas ajouté d'ingrédient. Seule exception : un aliment existant qui devient une
+      // recette garde sa ligne si une quantité y est saisie.
+      if (onlyAuto && (isNew || state.rows[0].quantity === "")) state.rows = [];
     } else if (!onlyAuto) {
       // Recette redevenue aliment simple : une seule ligne automatique.
       state.rows = [{ auto: true, name: "", quantity: "", unit_id: defaultUnit }];
@@ -1432,6 +1435,7 @@ function openFoodDialog(f) {
   editIngredients = ingredientEditor({
     initial: recipe ? own : [{ auto: true, quantity: own[0] ? own[0].quantity : null, unit_id: own[0] ? own[0].unit_id : undefined }],
     recipe,
+    isNew: !f,
     foodName: () => $("food-edit-name").value,
     onChange: () => syncRecipeBox(editChecks, editIngredients),
   });
