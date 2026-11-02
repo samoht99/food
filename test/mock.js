@@ -10,6 +10,11 @@
 // - add_food / update_food(ings) : ings = [{ name, quantity, unit_id }] (unit_id : seulement pour un ingrédient créé)
 //   tout aliment a au moins 1 ingrédient, de n'importe quel nom (plus de lien de nom) ; 2 ingrédients ou plus : la classe Recettes est ajoutée
 // - get_ingredients : unit_id en plus ; add_ingredient(uid) ; update_ingredient(uid)
+// Listes de courses (specs v2-5) : get_ingredients (category_id), add_ingredient(cid), update_ingredient(cid : -1 = inchangée) ;
+// get_shop_categories ; add_shop_category(n, pc, pk, nm) ; update_shop_category(cid, n, pc, pk, nm) ; delete_shop_category(cid) ;
+// get_shop_items ; add_shop_item(lst, n, cid, q, uid) -> { merged, id } ; update_shop_item(iid, n, cid, q, uid) ;
+// set_shop_item_checked(iid, chk) ; delete_shop_item(iid) ; clear_shop_list(lst) ; move_shop_item(iid, to_list) -> { merged, id } ;
+// preview_shop_generation(d_from, d_to, mode) et generate_shop(...) -> { added, replaced, merged, split, no_qty }
 (() => {
   try { localStorage.removeItem("food_session"); sessionStorage.removeItem("food_session"); } catch {}
 
@@ -149,6 +154,134 @@
   dayCons.set(addDays(t, 4), [6]); // Resto soir : pas de repas le soir
   dayCons.set(addDays(t, -20), [2]); // hors des 15 jours affichés
   put(-20, "midi", ["poisson", "riz", "courgette", "yaourt"]); // hors des 15 jours affichés, encore en base
+
+  // Listes de courses (specs v2-5). Catégories : rangs dans les tris custom (1 à N, sans égalité ni trou).
+  units.push({ id: 6, name: "tranche", plural: "tranches" });
+  const TRANCHE = 6;
+  const shopCats = [];
+  let nextCatId = 1;
+  const catOf = (id) => shopCats.find((c) => c.id === id);
+  // Place une catégorie à un rang (les autres sont décalées) : même algorithme que la base.
+  const shopPlace = (cid, pc, pk) => {
+    for (const [col, pos] of [["pos_carrefour", pc], ["pos_coop", pk]]) {
+      if (pos === null || pos === undefined) continue;
+      const p = Math.max(1, Math.min(Number(pos), shopCats.length));
+      const others = shopCats.filter((c) => c.id !== cid).sort((x, y) => x[col] - y[col] || x.id - y.id);
+      others.forEach((c, i) => { c[col] = i + 1 >= p ? i + 2 : i + 1; });
+      catOf(cid)[col] = p;
+    }
+  };
+  const addShopCat = (name, no_merge = false, is_default = false, pc = null, pk = null) => {
+    const c = { id: nextCatId++, name, pos_carrefour: shopCats.length + 1, pos_coop: shopCats.length + 1, no_merge, is_default };
+    shopCats.push(c);
+    shopPlace(c.id, pc, pk);
+    return c.id;
+  };
+  const compactCats = () => {
+    for (const col of ["pos_carrefour", "pos_coop"]) [...shopCats].sort((x, y) => x[col] - y[col]).forEach((c, i) => { c[col] = i + 1; });
+  };
+  const AUTRE = addShopCat("Autre", false, true);
+  const FRUITS = addShopCat("Fruits et légumes", false, false, 1, 2);
+  const CREMERIE = addShopCat("Crémerie", false, false, 2, 1);
+  const VIANDE = addShopCat("Viande", true, false, 3, 3);
+  const POISSON = addShopCat("Poisson", true, false, 4, 4);
+  const EPICERIE = addShopCat("Épicerie", false, false, 5, 6);
+  const catOfIng = {
+    poulet: VIANDE, jambon: VIANDE, "boeuf haché": VIANDE, poisson: POISSON,
+    brocoli: FRUITS, carotte: FRUITS, courgette: FRUITS, épinards: FRUITS, "haricots verts": FRUITS,
+    pomme: FRUITS, banane: FRUITS, poire: FRUITS, orange: FRUITS, salade: FRUITS, tomate: FRUITS,
+    yaourt: CREMERIE, "fromage blanc": CREMERIE, emmental: CREMERIE,
+    riz: EPICERIE, pâtes: EPICERIE, quinoa: EPICERIE, polenta: EPICERIE, "pâtes à lasagne": EPICERIE, "sauce tomate": EPICERIE,
+  };
+  for (const i of ingredients) i.category_id = catOfIng[i.name] || null; // oeuf, pizza... : aucune catégorie (Autre)
+
+  const shopItems = [];
+  let nextShopId = 1;
+  const lc = (s) => String(s).trim().toLowerCase();
+  const round3 = (n) => Math.round(n * 1000) / 1000;
+  const matchItem = (list, name, cid, uid, qnull) => {
+    if (catOf(cid).no_merge) return null;
+    return shopItems.find((s) => s.list === list && lc(s.name) === lc(name) && s.category_id === cid
+      && s.unit_id === uid && (s.quantity === null) === qnull && !s.checked) || null;
+  };
+  // Ajoute un élément (déjà contrôlé), fusionné avec un élément existant si merge et si la règle le permet.
+  const shopPut = (list, name, cid, q, uid, merge) => {
+    const u = q === null ? null : (uid === undefined ? null : uid);
+    const m = merge ? matchItem(list, name, cid, u, q === null) : null;
+    if (m) {
+      if (q === null) return { merged: true, id: m.id, before: null, after: null };
+      const before = m.quantity;
+      m.quantity = round3(before + q);
+      return { merged: true, id: m.id, before, after: m.quantity };
+    }
+    const it = { id: nextShopId++, list, name: String(name).trim(), category_id: cid, quantity: q, unit_id: u, checked: false };
+    shopItems.push(it);
+    return { merged: false, id: it.id };
+  };
+  const shopItemError = (n, cid, q, uid) => {
+    if (!String(n || "").trim() || String(n).trim().length > 60) return "invalid_name";
+    if (!catOf(cid)) return "unknown_category";
+    if (q !== undefined && q !== null && !(q > 0 && q <= 99999 && round3(q) === q)) return "invalid_quantity";
+    if (uid !== undefined && uid !== null && !units.some((u) => u.id === uid)) return "unknown_unit";
+    return null;
+  };
+  const unitName = (id) => (units.find((u) => u.id === id) || {}).name || null;
+  const dayDiff = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  // Génération de la liste France à partir des repas (même algorithme que la base). Renvoie un résultat ou un code d'erreur.
+  const shopGenerate = (d_from, d_to, mode, simulate) => {
+    if (!["replace", "append", "merge"].includes(mode)) return "invalid_mode";
+    if (!d_from || !d_to || d_from < zurichToday() || d_to < d_from || dayDiff(d_from, d_to) > 61) return "invalid_dates";
+    const snap = simulate ? JSON.parse(JSON.stringify(shopItems)) : null;
+    const snapId = nextShopId;
+    let replaced = 0;
+    if (mode === "replace") {
+      replaced = shopItems.filter((s) => s.list === "france").length;
+      for (let i = shopItems.length - 1; i >= 0; i--) if (shopItems[i].list === "france") shopItems.splice(i, 1);
+    }
+    const rows = new Map();
+    for (const [key, items] of meals) {
+      const d = key.split("|")[0];
+      if (d < d_from || d > d_to) continue;
+      for (const it of items) {
+        for (const l of foodIngs.get(it.id) || []) {
+          const ing = ingredients.find((x) => x.id === l.id);
+          const cid = ing.category_id || AUTRE;
+          const qnull = l.quantity === null;
+          const grp = catOf(cid).no_merge ? `${key}-${it.id}` : "";
+          const k = [ing.name, cid, ing.unit_id, qnull, grp].join("|");
+          const r = rows.get(k) || { name: ing.name, cid, uid: ing.unit_id, qnull, total: 0, grp };
+          if (!qnull) r.total += l.quantity * it.portions;
+          rows.set(k, r);
+        }
+      }
+    }
+    const res = { added: 0, replaced, merged: [], split: [], no_qty: [] };
+    for (const r of [...rows.values()].sort((x, y) => x.name.localeCompare(y.name) || x.grp.localeCompare(y.grp))) {
+      const q = r.qnull ? null : round3(r.total);
+      const uid = r.qnull ? null : r.uid;
+      if (r.qnull && !res.no_qty.includes(r.name)) res.no_qty.push(r.name);
+      const put = shopPut("france", r.name, r.cid, q, uid, mode === "merge");
+      if (put.merged) {
+        res.merged.push({ name: r.name, unit: unitName(uid), before: put.before, add: q, after: put.after });
+      } else {
+        res.added++;
+        if (mode === "merge" && !catOf(r.cid).no_merge && !res.split.includes(r.name)
+            && shopItems.some((s) => s.list === "france" && s.id !== put.id && lc(s.name) === lc(r.name)
+              && s.category_id === r.cid && s.unit_id === uid && (s.quantity === null) === r.qnull && s.checked)) res.split.push(r.name);
+      }
+    }
+    if (simulate) { shopItems.splice(0, shopItems.length, ...snap); nextShopId = snapId; }
+    return res;
+  };
+  // Quelques éléments de départ (le beurre déjà coché : une génération en fusion crée une nouvelle ligne).
+  shopPut("france", "beurre", CREMERIE, 100, G, false); shopItems[0].checked = true;
+  shopPut("france", "concombre", FRUITS, 3, PIECE, false);
+  shopPut("france", "pâtes", EPICERIE, 200, G, false);
+  shopPut("france", "fromage croque-monsieur", CREMERIE, 4, TRANCHE, false);
+  shopPut("france", "sel", AUTRE, null, null, false);
+  shopPut("suisse", "chocolat noir", EPICERIE, 3, PIECE, false);
+  shopPut("suisse", "fromage à raclette", CREMERIE, 600, G, false);
+  shopPut("suisse", "papier toilette", AUTRE, 1, PIECE, false);
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
   const ok = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body });
@@ -357,7 +490,7 @@
         return ok([...ingredients]
           .sort((x, y) => x.name.localeCompare(y.name, "fr"))
           .map((i) => ({
-            id: i.id, name: i.name, unit_id: i.unit_id,
+            id: i.id, name: i.name, unit_id: i.unit_id, category_id: i.category_id || null,
             uses: [...foodIngs.values()].filter((rows) => linksIngredient(rows, i.id)).length,
           })));
       }
@@ -368,8 +501,12 @@
         if (!name || name.length > 60) return fail("invalid_name");
         const uid = a.uid === undefined || a.uid === null ? G : a.uid;
         if (!units.some((u) => u.id === uid)) return fail("unknown_unit");
+        const cid = a.cid === undefined || a.cid === null ? null : a.cid;
+        if (cid !== null && !catOf(cid)) return fail("unknown_category");
         if (ingredients.some((i) => i.name === name)) return fail("ingredient_exists");
-        return ok(ingredientId(name, uid));
+        const iid = ingredientId(name, uid);
+        ingredients.find((i) => i.id === iid).category_id = cid;
+        return ok(iid);
       }
 
       case "update_ingredient": {
@@ -380,9 +517,13 @@
         if (!i) return fail("unknown_ingredient");
         const uid = a.uid === undefined || a.uid === null ? i.unit_id : a.uid;
         if (!units.some((u) => u.id === uid)) return fail("unknown_unit");
+        // cid : -1 ou absent = inchangée, null = aucune catégorie.
+        const cid = a.cid === undefined || a.cid === -1 ? (i.category_id || null) : a.cid;
+        if (cid !== null && !catOf(cid)) return fail("unknown_category");
         if (ingredients.some((x) => x.id !== a.iid && x.name === name)) return fail("ingredient_exists");
         i.name = name;
         i.unit_id = uid;
+        i.category_id = cid;
         return voidOk();
       }
 
@@ -393,6 +534,120 @@
         if (users.length) return fail("ingredient_in_use", JSON.stringify({ n: users.length, items: users }));
         ingredients = ingredients.filter((i) => i.id !== a.iid);
         return voidOk();
+      }
+
+      case "get_shop_categories":
+        return ok([...shopCats].sort((x, y) => x.name.localeCompare(y.name, "fr")).map((c) => ({
+          ...c,
+          uses: ingredients.filter((i) => i.category_id === c.id).length + shopItems.filter((s) => s.category_id === c.id).length,
+        })));
+
+      case "add_shop_category": {
+        if (role !== "admin") return fail("forbidden");
+        const name = String(a.n || "").trim();
+        if (!name || name.length > 40) return fail("invalid_name");
+        if (shopCats.some((c) => lc(c.name) === lc(name))) return fail("category_exists");
+        return ok(addShopCat(name, !!a.nm, false, a.pc === undefined ? null : a.pc, a.pk === undefined ? null : a.pk));
+      }
+
+      case "update_shop_category": {
+        if (role !== "admin") return fail("forbidden");
+        const name = String(a.n || "").trim();
+        const c = catOf(a.cid);
+        if (!name || name.length > 40) return fail("invalid_name");
+        if (!c) return fail("unknown_category");
+        if (shopCats.some((x) => x.id !== a.cid && lc(x.name) === lc(name))) return fail("category_exists");
+        c.name = name;
+        c.no_merge = !!a.nm;
+        shopPlace(c.id, a.pc === undefined ? null : a.pc, a.pk === undefined ? null : a.pk);
+        return voidOk();
+      }
+
+      case "delete_shop_category": {
+        if (role !== "admin") return fail("forbidden");
+        const c = catOf(a.cid);
+        if (!c) return voidOk();
+        if (c.is_default) return fail("category_default");
+        const items = [
+          ...ingredients.filter((i) => i.category_id === c.id).map((i) => `${i.name} (ingrédient)`),
+          ...shopItems.filter((s) => s.category_id === c.id).map((s) => `${s.name} (liste ${s.list === "france" ? "France" : "Suisse"})`),
+        ].sort();
+        if (items.length) return fail("category_in_use", JSON.stringify({ n: items.length, items }));
+        shopCats.splice(shopCats.indexOf(c), 1);
+        compactCats();
+        return voidOk();
+      }
+
+      case "get_shop_items":
+        return ok(shopItems.map((s) => ({ ...s })));
+
+      case "add_shop_item": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        if (!["france", "suisse"].includes(a.lst)) return fail("invalid_list");
+        const cid = a.cid === undefined || a.cid === null ? AUTRE : a.cid;
+        const err = shopItemError(a.n, cid, a.q, a.uid);
+        if (err) return fail(err);
+        return ok(shopPut(a.lst, a.n, cid, a.q === undefined ? null : a.q, a.uid === undefined ? null : a.uid, true));
+      }
+
+      case "update_shop_item": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        const s = shopItems.find((x) => x.id === a.iid);
+        if (!s) return fail("unknown_item");
+        const cid = a.cid === undefined || a.cid === null ? AUTRE : a.cid;
+        const err = shopItemError(a.n, cid, a.q, a.uid);
+        if (err) return fail(err);
+        const q = a.q === undefined ? null : a.q;
+        s.name = String(a.n).trim();
+        s.category_id = cid;
+        s.quantity = q;
+        s.unit_id = q === null ? null : (a.uid === undefined ? null : a.uid);
+        return voidOk();
+      }
+
+      case "set_shop_item_checked": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        const s = shopItems.find((x) => x.id === a.iid);
+        if (!s) return fail("unknown_item");
+        s.checked = !!a.chk;
+        return voidOk();
+      }
+
+      case "delete_shop_item": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        const i = shopItems.findIndex((x) => x.id === a.iid);
+        if (i >= 0) shopItems.splice(i, 1);
+        return voidOk();
+      }
+
+      case "clear_shop_list": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        if (!["france", "suisse"].includes(a.lst)) return fail("invalid_list");
+        for (let i = shopItems.length - 1; i >= 0; i--) if (shopItems[i].list === a.lst) shopItems.splice(i, 1);
+        return voidOk();
+      }
+
+      case "move_shop_item": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        if (!["france", "suisse"].includes(a.to_list)) return fail("invalid_list");
+        const s = shopItems.find((x) => x.id === a.iid);
+        if (!s) return fail("unknown_item");
+        if (s.list === a.to_list) return ok({ merged: false, id: s.id });
+        const m = !s.checked ? matchItem(a.to_list, s.name, s.category_id, s.unit_id, s.quantity === null) : null;
+        if (m) {
+          if (s.quantity !== null) m.quantity = round3(m.quantity + s.quantity);
+          shopItems.splice(shopItems.indexOf(s), 1);
+          return ok({ merged: true, id: m.id });
+        }
+        s.list = a.to_list;
+        return ok({ merged: false, id: s.id });
+      }
+
+      case "preview_shop_generation":
+      case "generate_shop": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        const res = shopGenerate(a.d_from, a.d_to, a.mode, fn === "preview_shop_generation");
+        return typeof res === "string" ? fail(res) : ok(res);
       }
     }
     return fail("unknown_function");

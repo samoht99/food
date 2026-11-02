@@ -1,0 +1,57 @@
+Specs V2-5 : listes de courses
+(nouveautés uniquement ; le reste est inchangé, voir specs V1 et V2-1 à V2-4)
+
+1- Onglet « Courses »
+1-1- nouvel onglet « Courses » entre Repas et Admin, visible pour les trois rôles (read, write, admin). Il n'apparaît que si la base a les listes de courses (migration 014)
+1-2- deux listes, France et Suisse, choisies par deux boutons en haut de l'onglet ; la dernière liste affichée reste affichée tant qu'on ne quitte pas l'onglet. Chaque bouton indique le nombre d'éléments de sa liste
+1-3- un bouton « Actualiser » recharge les listes (pas de mise à jour en direct : elles sont aussi rechargées à l'ouverture de l'onglet)
+1-4- chaque élément affiche une case, son nom, sa quantité suivie de l'unité (« 250 g », « 1,5 pièce », « 2 pièces » ; sans quantité : rien) et, sauf dans un tri custom, sa catégorie en petit sous le nom
+1-5- case cochée : l'élément est rayé et grisé, et il reste à sa place (il ne descend pas en bas de la liste). Cocher et décocher se fait sans confirmation et est partagé entre tous les appareils
+1-6- droits : read voit les listes ; write et admin cochent, ajoutent, modifient, déplacent, suppriment, vident et génèrent. Les boutons d'action ne sont pas affichés à un read et un appui sur un élément ne fait rien
+
+2- Éléments d'une liste
+2-1- un élément a un nom (texte libre de 1 à 60 caractères, aucune vérification), une catégorie, une quantité facultative (supérieure à 0, 99999 au plus, 3 décimales au plus), une unité (facultative, de la liste des unités ; sans quantité l'unité est ignorée), un état coché ou non et sa date d'ajout. Il est enregistré en base et y reste (voir 6)
+2-2- il n'y a aucun lien entre un élément de liste et un ingrédient ou une classe d'aliment : les listes ne lisent les ingrédients qu'au moment de la génération (nom, quantité, unité et catégorie sont alors copiés)
+2-3- ajout manuel (bouton « + Ajouter ») : popup avec nom, catégorie (liste des catégories, « Autre » par défaut), quantité avec boutons − / + (mêmes pas que les quantités d'ingrédients : 25 pour g et ml, 0,5 pour pièce, 1 pour les autres unités ; on peut taper n'importe quelle valeur) et unité (ou « aucune »). L'élément est ajouté à la liste affichée, ou fusionné avec un élément existant (voir 4)
+2-4- un appui sur un élément (write et admin) ouvre un popup avec trois actions : « Modifier » (mêmes champs que l'ajout, sans fusion), « Déplacer vers Suisse » (ou « vers France ») et « Supprimer ». Ajouter, modifier, déplacer et supprimer demandent confirmation (popup de confirmation après « Ajouter » ou « Enregistrer »)
+2-5- déplacer un élément dans l'autre liste applique la règle de fusion (voir 4) face aux éléments de la liste d'arrivée. Un élément déjà coché n'est jamais fusionné : il arrive comme une ligne séparée et reste coché
+2-6- « Vider » (une liste à la fois) supprime tous ses éléments, cochés ou non, après confirmation
+
+3- Tris
+3-1- 3 tris par liste : « A → Z » (ordre alphabétique sans accents ni majuscules, puis par quantité), « Date d'ajout » (du premier ajouté au dernier) et un tri custom : « Carrefour Segny » pour France, « Coop Vich » pour Suisse
+3-2- tri custom : les éléments sont regroupés par catégorie sous un titre, dans l'ordre des positions de la catégorie pour ce magasin, puis par ordre alphabétique dans chaque catégorie
+3-3- un élément fusionné garde sa date d'ajout d'origine
+3-4- le tri est propre à la session : il est mémorisé dans le navigateur (onglet en cours) et disparaît quand on se déconnecte (« Quitter »). À chaque connexion les deux listes sont triées de A à Z. Un autre navigateur ou appareil, même avec le même utilisateur, a son propre tri. Le tri est indépendant pour France et pour Suisse
+3-5- le tri ne change rien en base
+
+4- Règle de fusion (génération, ajout manuel, déplacement)
+4-1- deux éléments se fusionnent (leurs quantités s'additionnent) seulement si : même liste, même nom (sans tenir compte des majuscules, accents significatifs), même unité, même catégorie, aucun des deux n'est coché, la catégorie n'est pas « ne s'additionne pas » (viande, poisson...), et les deux ont une quantité. Deux éléments sans quantité se fusionnent sans rien changer. Un élément avec quantité n'est jamais fusionné avec un élément sans quantité
+4-2- exemple : concombre 3 pièces + concombre 1 pièce = concombre 4 pièces ; tomate 2 pièces et tomate 100 g restent deux lignes ; beurre 100 g (coché) + beurre 150 g = deux lignes
+4-3- catégories « ne s'additionne pas » : chaque besoin reste une ligne séparée (viande blanche 250 g et viande blanche 300 g de deux repas donnent deux lignes), y compris face à une ligne existante de même nom
+
+5- Génération (France seulement)
+5-1- le bouton « Générer » n'existe que pour la liste France. La liste Suisse ne se remplit qu'à la main (ajout manuel et déplacement depuis France)
+5-2- popup : « Du » et « Au » (dates à partir d'aujourd'hui, heure de Zurich, par défaut aujourd'hui à aujourd'hui + 6 jours ; aucun jour passé) et trois modes : « Écraser la liste » (la liste actuelle est supprimée puis remplacée), « Ajouter à la fin » (les nouveaux éléments s'ajoutent sans fusion avec l'existant) et « Fusionner » (règle de fusion 4 avec les éléments existants)
+5-3- tous les repas des jours choisis sont lus (midi et soir, bornes incluses) ; pour chaque aliment du repas on prend chacun de ses ingrédients avec sa quantité de base multipliée par les portions du repas. Les besoins identiques (même ingrédient, même unité, même catégorie) s'additionnent selon la règle 4 ; une catégorie « ne s'additionne pas » donne une ligne par repas et par aliment
+5-4- la catégorie de l'élément est celle de l'ingrédient ; un ingrédient sans catégorie donne « Autre ». Un ingrédient sans quantité (dans un aliment) donne une ligne sans quantité
+5-5- avant d'appliquer, un popup de confirmation montre le résultat exact, calculé par la base : nombre d'éléments ajoutés, nombre d'éléments supprimés (mode Écraser), chaque fusion avec son calcul (« pâtes : 200 g + 250 g = 450 g »), les ingrédients dont la ligne existante est cochée (une nouvelle ligne est créée) et le nombre d'éléments sans quantité. On confirme ou on annule : rien n'est modifié avant la confirmation
+5-6- les jours doivent commencer à aujourd'hui ou après, la période est de 62 jours au plus ; sinon la base refuse (dates invalides)
+
+6- Cycle de vie des données
+6-1- un élément n'est supprimé de la base que par : « Supprimer » (un élément), « Vider » (toute la liste), « Écraser » à la génération, ou la fusion qui l'absorbe (déplacement). Un élément coché reste en base. Aucune purge automatique
+
+7- Catégories de courses
+7-1- liste gérée dans l'Admin (nouveau sous-onglet « Catégories »), vide au départ sauf « Autre », créée d'office par la migration : elle est la catégorie par défaut, ne peut pas être supprimée, et aucun ingrédient ne lui est assigné (un ingrédient sans catégorie compte comme « Autre » à la génération)
+7-2- une catégorie a un nom (1 à 40 caractères, unique sans tenir compte de la casse), une position pour le tri custom Carrefour Segny, une position pour le tri custom Coop Vich, et une case « ne s'additionne pas »
+7-3- les positions sont des rangs de 1 à N (N = nombre de catégories), sans égalité ni trou : donner à une catégorie une position déjà prise l'insère à cette position et décale d'un cran les suivantes, pour chaque tri. Une position hors limites est ramenée à 1 ou à N. Une nouvelle catégorie est placée en dernier par défaut. Supprimer une catégorie recompacte les rangs
+7-4- la catégorie d'un ingrédient se choisit dans son popup (ajout et modification, liste « Aucune » par défaut) ; la liste des ingrédients de l'Admin l'affiche en pastille
+7-5- supprimer une catégorie est refusé tant qu'un ingrédient ou un élément de liste l'utilise ; le popup « Suppression impossible » liste ce qui l'utilise (ingrédients et éléments de liste avec leur liste)
+
+8- Audit
+8-1- nouvelles actions consignées : shop_add, shop_update, shop_delete, shop_move, shop_clear, shop_generate et shop_category_add, shop_category_update, shop_category_delete. Cocher une case n'est pas consigné
+8-2- formats : élément { list, name, category, quantity, unit } ; vider { list, count } ; génération { from, to, mode, added, merged, replaced } ; catégorie { name, carrefour, coop, no_merge }. L'état d'un ingrédient contient en plus category (nom, si elle existe)
+
+9- Migration 014_shopping_lists.sql
+9-1- crée food.shop_categories (avec « Autre »), food.shop_items, ingredients.category_id ; étend le journal d'audit ; ajoute get_shop_categories, add/update/delete_shop_category, get_shop_items, add/update/delete_shop_item, set_shop_item_checked, move_shop_item, clear_shop_list, preview_shop_generation et generate_shop ; remplace get_ingredients, add_ingredient, update_ingredient (catégorie) ; schema.sql reçoit les mêmes versions
+9-2- le site garde son fonctionnement avant la migration (pas d'onglet Courses, pas de catégorie d'ingrédient)
+9-3- aucune donnée n'est migrée : la liste de catégories est vide au départ (sauf « Autre »), c'est vous qui les créez puis qui les assignez aux ingrédients dans l'Admin

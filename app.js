@@ -70,12 +70,32 @@ let dayConstraints = new Map(); // "2026-10-27" -> [ids de contraintes]
 let units = []; // [{ id, name, plural }] : unités possibles d'un ingrédient (liste fixe, gérée en SQL)
 let effects = []; // [{ id, name, description, blocked_slot }] : effets possibles d'une contrainte (liste fixe, gérée en SQL)
 let ingredients = []; // [{ id, name, uses }] : liste des ingrédients (admin uniquement)
-let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constraints"
+let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constraints" | "categories"
 let currentTab = "home";
 let today = "";
 let adminClassId = null;
 let adminSearch = "";
 let adminUsage = "all"; // filtre d'utilisation des listes Admin : "all" | "used" | "unused"
+let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
+let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
+let shopList = "france"; // liste affichée : "france" | "suisse"
+const SHOP_LISTS = {
+  france: { label: "France", custom: "Carrefour Segny", pos: "pos_carrefour" },
+  suisse: { label: "Suisse", custom: "Coop Vich", pos: "pos_coop" },
+};
+// Tri de chaque liste : propre à la session (onglet en cours), perdu à la déconnexion. Par défaut : A → Z.
+const SORT_KEY = "food_shop_sort";
+const defaultShopSorts = () => ({ france: "alpha", suisse: "alpha" });
+function readShopSorts() {
+  const sorts = defaultShopSorts();
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SORT_KEY) || "{}");
+    for (const k of Object.keys(sorts)) if (["alpha", "date", "custom"].includes(s[k])) sorts[k] = s[k];
+  } catch {}
+  return sorts;
+}
+let shopSorts = readShopSorts();
+const saveShopSorts = () => { try { sessionStorage.setItem(SORT_KEY, JSON.stringify(shopSorts)); } catch {} };
 
 // ------------------------------------------------------------------ Réseau
 async function rpc(name, args) {
@@ -143,6 +163,15 @@ function errorText(e) {
     case "unknown_constraint": return "Une contrainte sélectionnée n'existe plus. Rechargez la page.";
     case "out_of_window": return "Ce jour n'est pas modifiable.";
     case "unknown_food": return "Un aliment sélectionné n'existe plus. Rechargez la page.";
+    case "invalid_list": return "Cette liste n'existe pas.";
+    case "unknown_item": return "Cet élément n'existe plus. Actualisez la liste.";
+    case "unknown_category": return "Une catégorie sélectionnée n'existe plus. Rechargez la page.";
+    case "category_exists": return "Cette catégorie existe déjà.";
+    case "category_default": return "La catégorie « Autre » ne peut pas être supprimée.";
+    case "category_in_use": return "Cette catégorie est encore utilisée.";
+    case "invalid_position": return "La position doit être un nombre entier supérieur à 0.";
+    case "invalid_dates": return "Choisissez des jours à partir d'aujourd'hui, 62 jours au plus.";
+    case "invalid_mode": return "Choisissez comment générer la liste.";
     case "forbidden": return "Action non autorisée avec ce mot de passe.";
     default: return "Une erreur est survenue. Réessayez plus tard.";
   }
@@ -165,6 +194,8 @@ const fmtQty = (q, unitId) => {
   const u = unitOf(unitId);
   return `${fmtNum(q)} ${q >= 2 ? u.plural : u.name}`.trim();
 };
+// Pas des boutons − / + d'une quantité selon l'unité : 25 pour g et ml, 0,5 pour pièce, 1 pour les autres.
+const qtyStep = (uid) => ({ g: 25, ml: 25, "pièce": 0.5 })[unitOf(uid).name] || 1;
 
 // ------------------------------------------------------------------- Dates
 function zurichToday() {
@@ -258,7 +289,7 @@ async function loadMeals() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadCatalog(), loadConstraints(), loadMeals(), loadIngredients(), loadEffects()]);
+    await Promise.all([loadCatalog(), loadConstraints(), loadMeals(), loadIngredients(), loadEffects(), loadShop()]);
     statusEl.textContent = "";
     render();
   } catch (e) {
@@ -423,14 +454,16 @@ function renderMeals() {
 function render() {
   renderHome();
   renderMeals();
+  renderShop();
   renderAdmin();
 }
 
 // ------------------------------------------------------------------ Onglets
 function switchTab(name) {
   currentTab = name;
-  for (const t of ["home", "meals", "admin"]) $(`tab-${t}`).hidden = t !== name;
+  for (const t of ["home", "meals", "shop", "admin"]) $(`tab-${t}`).hidden = t !== name;
   for (const b of $("tabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === name);
+  if (name === "shop") refreshShop();
   if (name === "meals") scrollToToday();
   else window.scrollTo(0, 0);
   updateTodayBtn();
@@ -628,8 +661,6 @@ function ingredientEditor({ initial, onChange }) {
     changed();
   }
 
-  // Pas des boutons − / + selon l'unité : 25 pour g et ml, 0,5 pour pièce, 1 pour les autres (tranche, cuillères).
-  const stepOf = (uid) => ({ g: 25, ml: 25, "pièce": 0.5 })[unitOf(uid).name] || 1;
   const unitIdOf = (row) => { const k = known(row.name); return k ? k.unit_id : row.unit_id; };
 
   function renderRows() {
@@ -648,7 +679,7 @@ function ingredientEditor({ initial, onChange }) {
       qty.addEventListener("input", () => { row.quantity = qty.value; });
       const bump = (dir) => () => {
         const cur = Number(String(row.quantity).replace(",", ".")) || 0;
-        const v = Math.round((cur + dir * stepOf(unitIdOf(row))) * 1000) / 1000;
+        const v = Math.round((cur + dir * qtyStep(unitIdOf(row))) * 1000) / 1000;
         if (v > 0 && v <= 99999) { row.quantity = String(v); qty.value = row.quantity; }
       };
       const less = button("btn-step", "−", bump(-1));
@@ -980,7 +1011,7 @@ function renderAdmin() {
   if (role !== "admin") { root.replaceChildren(); return; }
   root.replaceChildren();
   const seg = el("div", "segment");
-  for (const [key, label] of [["foods", "Aliments"], ["ingredients", "Ingrédients"], ["constraints", "Contraintes"]]) {
+  for (const [key, label] of [["foods", "Aliments"], ["ingredients", "Ingrédients"], ["constraints", "Contraintes"], ["categories", "Catégories"]]) {
     seg.append(button("seg" + (adminSection === key ? " on" : ""), label, () => {
       adminSection = key;
       adminSearch = "";
@@ -990,6 +1021,7 @@ function renderAdmin() {
   }
   root.append(seg);
   if (adminSection === "constraints") renderConstraintsAdmin(root);
+  else if (adminSection === "categories") renderCategoriesAdmin(root);
   else if (adminSection === "ingredients") renderIngredientsAdmin(root);
   else renderFoodsAdmin(root);
 }
@@ -1098,6 +1130,14 @@ function unitSelect(selected) {
   return sel;
 }
 
+// Liste déroulante des catégories de courses d'un ingrédient : « Aucune (Autre) » puis les catégories (hors « Autre »).
+function categorySelect(selected) {
+  const sel = el("select", "unit-select");
+  sel.append(new Option("Aucune (Autre)", "", false, selected === null || selected === undefined));
+  for (const c of catsByName()) if (!c.is_default) sel.append(new Option(c.name, c.id, false, c.id === selected));
+  return sel;
+}
+
 // Paramètre « unité » des appels (omis tant que la base n'a pas les unités).
 const unitArg = (uid) => (units.length ? { uid } : {});
 
@@ -1131,6 +1171,7 @@ function renderIngredientsAdmin(root) {
       const li = el("li", "food-row");
       const name = el("span", "fname", i.name);
       if (i.unit_id !== undefined) name.append(el("span", "cls-pill", unitOf(i.unit_id).name)); // son unité
+      if (i.category_id) name.append(el("span", "cls-pill", shopCatOf(i.category_id).name)); // sa catégorie de courses
       const uses = Number(i.uses) || 0;
       name.append(el("small", "fmeta", uses ? `utilisé par ${uses} aliment${uses > 1 ? "s" : ""}` : "non utilisé"));
       li.append(name);
@@ -1177,6 +1218,8 @@ function openIngredientDialog(i) {
   $("ingredient-save").textContent = i ? "Enregistrer" : "Ajouter";
   ingredientName.value = i ? i.name : "";
   $("ingredient-unit").replaceChildren(unitSelect(i ? i.unit_id : undefined));
+  $("ingredient-category").replaceChildren(categorySelect(i ? i.category_id : null));
+  $("ingredient-category-row").hidden = !shopCats.length;
   ingredientError.textContent = "";
   ingredientDialog.showModal();
   ingredientName.focus();
@@ -1192,14 +1235,17 @@ $("ingredient-save").addEventListener("click", async () => {
   const name = ingredientName.value.trim().toLowerCase();
   if (!name) { ingredientError.textContent = errorText({ code: "invalid_name" }); return; }
   const uid = Number($("ingredient-unit").querySelector("select").value);
+  const catValue = $("ingredient-category").querySelector("select").value;
+  const cid = catValue === "" ? null : Number(catValue);
+  const catArg = shopCats.length ? { cid } : {};
   if (!editingIngredient) {
     const btn = $("ingredient-save");
     btn.disabled = true;
     try {
-      await rpc("add_ingredient", { ...auth(), n: name, ...unitArg(uid) });
+      await rpc("add_ingredient", { ...auth(), n: name, ...unitArg(uid), ...catArg });
       ingredientDialog.close();
       statusEl.textContent = "";
-      await loadIngredients();
+      await Promise.all([loadIngredients(), loadShop()]);
       renderAdmin();
     } catch (e) {
       fail(e, ingredientError);
@@ -1208,7 +1254,8 @@ $("ingredient-save").addEventListener("click", async () => {
     return;
   }
   const unitChanged = units.length > 0 && uid !== editingIngredient.unit_id;
-  if (name === editingIngredient.name && !unitChanged) { ingredientDialog.close(); return; }
+  const catChanged = shopCats.length > 0 && cid !== (editingIngredient.category_id === undefined ? null : editingIngredient.category_id);
+  if (name === editingIngredient.name && !unitChanged && !catChanged) { ingredientDialog.close(); return; }
   // Changer l'unité ne convertit pas les quantités déjà saisies : on demande confirmation si elles existent.
   if (unitChanged && Number(editingIngredient.uses) > 0) {
     const ok = await confirmAction("Changer l'unité de cet ingrédient ?",
@@ -1218,10 +1265,10 @@ $("ingredient-save").addEventListener("click", async () => {
   const btn = $("ingredient-save");
   btn.disabled = true;
   try {
-    await rpc("update_ingredient", { ...auth(), iid: editingIngredient.id, n: name, ...unitArg(uid) });
+    await rpc("update_ingredient", { ...auth(), iid: editingIngredient.id, n: name, ...unitArg(uid), ...catArg });
     ingredientDialog.close();
     statusEl.textContent = "";
-    await loadFoodsAndIngredients(); // les recettes qui l'utilisent suivent
+    await Promise.all([loadFoodsAndIngredients(), loadShop()]); // les recettes qui l'utilisent suivent
     renderAdmin();
   } catch (e) {
     fail(e, ingredientError);
@@ -1452,6 +1499,481 @@ $("food-edit-save").addEventListener("click", async () => {
   btn.disabled = false;
 });
 
+// ------------------------------------------------------------ Listes de courses
+// Deux listes (France, Suisse) d'éléments { id, list, name, category_id, quantity, unit_id, checked }, partagées
+// entre tous les appareils. Lecture pour tous les rôles ; write et admin modifient. Aucun lien avec les ingrédients
+// (la liste France se génère à partir des repas : voir openShopGenerate).
+const canEditShop = () => role === "write" || role === "admin";
+const shopCatOf = (id) => shopCats.find((c) => c.id === id) || { name: "Autre", pos_carrefour: 999, pos_coop: 999 };
+const defaultShopCat = () => shopCats.find((c) => c.is_default) || shopCats[0];
+const otherShopList = (k) => (k === "france" ? "suisse" : "france");
+const plural = (n, one, many) => (n > 1 ? many : one);
+const catsByName = () => [...shopCats].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+// strict : une erreur est remontée (actualisation) ; sinon un échec laisse les listes vides (base pas encore à jour).
+async function loadShop(strict = false) {
+  const get = (name) => (strict ? rpc(name, auth()) : optional(rpc(name, auth())));
+  const [cats, items] = await Promise.all([get("get_shop_categories"), get("get_shop_items")]);
+  shopCats = cats;
+  shopItems = items.map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
+}
+
+async function refreshShop() {
+  try {
+    await loadShop(true);
+    statusEl.textContent = "";
+    renderShop();
+    renderAdmin();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+// « 250 g », « 3 pièces », « 2 » (sans unité) ou rien (sans quantité).
+const fmtShopQty = (it) => (it.quantity === null ? "" : it.unit_id ? fmtQty(it.quantity, it.unit_id) : fmtNum(it.quantity));
+
+function sortedShopItems(list) {
+  const items = shopItems.filter((i) => i.list === list);
+  const byName = (a, b) => fold(a.name).localeCompare(fold(b.name), "fr") || (a.quantity || 0) - (b.quantity || 0) || a.id - b.id;
+  const mode = shopSorts[list];
+  if (mode === "date") return items.sort((a, b) => a.id - b.id);
+  if (mode === "custom") {
+    const pos = SHOP_LISTS[list].pos;
+    return items.sort((a, b) => shopCatOf(a.category_id)[pos] - shopCatOf(b.category_id)[pos] || byName(a, b));
+  }
+  return items.sort(byName);
+}
+
+function renderShop() {
+  $("tab-shop-btn").hidden = !shopCats.length;
+  const root = $("tab-shop");
+  root.replaceChildren();
+  if (!shopCats.length) {
+    if (currentTab === "shop") switchTab("home");
+    return;
+  }
+  const editable = canEditShop();
+  const conf = SHOP_LISTS[shopList];
+  const seg = el("div", "segment");
+  for (const k of Object.keys(SHOP_LISTS)) {
+    const n = shopItems.filter((i) => i.list === k).length;
+    seg.append(button("seg" + (k === shopList ? " on" : ""), `${SHOP_LISTS[k].label} (${n})`, () => { shopList = k; renderShop(); }));
+  }
+  root.append(seg);
+
+  const actions = el("div", "shop-actions");
+  if (editable) {
+    if (shopList === "france") actions.append(button("btn-primary", "Générer", openShopGenerate));
+    actions.append(button("btn-primary", "+ Ajouter", () => openShopEdit(null)));
+    actions.append(button("btn-sm danger", "Vider", clearShopList));
+  }
+  actions.append(button("btn-sm", "Actualiser", refreshShop));
+  root.append(actions);
+
+  const mode = shopSorts[shopList];
+  const sorts = el("div", "shop-sorts");
+  sorts.append(el("span", "shop-sorts-label", "Tri"));
+  for (const [key, label] of [["alpha", "A → Z"], ["date", "Date d'ajout"], ["custom", conf.custom]]) {
+    sorts.append(button("chip" + (mode === key ? " on" : ""), label, () => {
+      shopSorts[shopList] = key;
+      saveShopSorts();
+      renderShop();
+    }));
+  }
+  root.append(sorts);
+
+  const items = sortedShopItems(shopList);
+  const list = el("ul", "shop-list");
+  if (!items.length) list.append(el("li", "empty", "Cette liste est vide."));
+  let lastCat = null;
+  for (const it of items) {
+    if (mode === "custom" && it.category_id !== lastCat) {
+      list.append(el("li", "shop-head", shopCatOf(it.category_id).name));
+      lastCat = it.category_id;
+    }
+    list.append(shopRow(it, mode !== "custom", editable));
+  }
+  root.append(list);
+}
+
+function shopRow(it, showCategory, editable) {
+  const li = el("li", "shop-item" + (it.checked ? " done" : ""));
+  const cb = el("input");
+  cb.type = "checkbox";
+  cb.checked = it.checked;
+  cb.disabled = !editable;
+  cb.setAttribute("aria-label", `${it.name} : acheté`);
+  cb.addEventListener("change", () => toggleShopItem(it, cb.checked, li, cb));
+  const main = el(editable ? "button" : "div", "shop-main");
+  if (editable) {
+    main.type = "button";
+    main.addEventListener("click", () => openShopItemMenu(it));
+  }
+  const text = el("span", "shop-text");
+  text.append(el("span", "shop-name", it.name));
+  if (showCategory) text.append(el("small", "shop-cat", shopCatOf(it.category_id).name));
+  main.append(text, el("span", "shop-qty", fmtShopQty(it)));
+  li.append(cb, main);
+  return li;
+}
+
+// Cocher ou décocher : sans confirmation (on le fait souvent en magasin). Annulé à l'écran si la base refuse.
+async function toggleShopItem(it, checked, li, cb) {
+  it.checked = checked;
+  li.classList.toggle("done", checked);
+  try {
+    await rpc("set_shop_item_checked", { ...auth(), iid: it.id, chk: checked });
+  } catch (e) {
+    it.checked = !checked;
+    li.classList.toggle("done", !checked);
+    cb.checked = !checked;
+    fail(e);
+  }
+}
+
+async function clearShopList() {
+  const label = SHOP_LISTS[shopList].label;
+  const n = shopItems.filter((i) => i.list === shopList).length;
+  if (!n) { statusEl.textContent = `La liste ${label} est déjà vide.`; return; }
+  const ok = await confirmAction(`Vider la liste ${label} ?`,
+    `${n} élément${plural(n, "", "s")} ${plural(n, "sera supprimé", "seront supprimés")}, cochés ou non.`);
+  if (!ok) return;
+  try {
+    await rpc("clear_shop_list", { ...auth(), lst: shopList });
+    await refreshShop();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+// ---- Élément : menu (modifier, déplacer, supprimer)
+const shopItemDialog = $("shop-item-dialog");
+closeOnBackdrop(shopItemDialog);
+$("shop-item-close").addEventListener("click", () => shopItemDialog.close());
+
+function openShopItemMenu(it) {
+  const label = SHOP_LISTS[it.list].label;
+  const other = otherShopList(it.list);
+  $("shop-item-title").textContent = it.name;
+  $("shop-item-meta").textContent = [fmtShopQty(it), shopCatOf(it.category_id).name, `liste ${label}`].filter(Boolean).join(" · ");
+  $("shop-item-error").textContent = "";
+  const menu = $("shop-item-menu");
+  menu.replaceChildren(
+    button("btn-sm", "Modifier", () => { shopItemDialog.close(); openShopEdit(it); }),
+    button("btn-sm", `Déplacer vers ${SHOP_LISTS[other].label}`, () => { shopItemDialog.close(); moveShopItem(it); }),
+    button("btn-sm danger", "Supprimer", () => { shopItemDialog.close(); deleteShopItem(it); }),
+  );
+  shopItemDialog.showModal();
+}
+
+async function moveShopItem(it) {
+  const to = otherShopList(it.list);
+  const ok = await confirmAction(`Déplacer vers la liste ${SHOP_LISTS[to].label} ?`,
+    `${it.name}${fmtShopQty(it) ? " · " + fmtShopQty(it) : ""}. Il est fusionné avec un élément identique de cette liste s'il y en a un.`);
+  if (!ok) return;
+  try {
+    await rpc("move_shop_item", { ...auth(), iid: it.id, to_list: to });
+    await refreshShop();
+  } catch (e) {
+    fail(e);
+    await refreshShop();
+  }
+}
+
+async function deleteShopItem(it) {
+  const ok = await confirmAction("Supprimer cet élément ?", `${it.name} (liste ${SHOP_LISTS[it.list].label})`);
+  if (!ok) return;
+  try {
+    await rpc("delete_shop_item", { ...auth(), iid: it.id });
+    await refreshShop();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+// ---- Élément : ajout et modification
+const shopEditDialog = $("shop-edit-dialog");
+const shopEditError = $("shop-edit-error");
+let shopEditing = null; // élément modifié, ou null pour un ajout
+let shopQty = null; // { value(), unit() } : champ quantité du popup
+
+// Quantité avec boutons − / + (pas selon l'unité) et choix de l'unité (ou aucune). value() : null (vide), NaN
+// (invalide) ou le nombre ; unit() : identifiant de l'unité ou null.
+function qtyField(root, quantity, unitId) {
+  root.replaceChildren();
+  const input = el("input", "shop-qty-input");
+  input.type = "number";
+  input.min = "0";
+  input.step = "any";
+  input.inputMode = "decimal";
+  input.placeholder = "quantité";
+  input.value = quantity === null || quantity === undefined ? "" : String(quantity);
+  input.setAttribute("aria-label", "Quantité");
+  const sel = el("select", "unit-select");
+  sel.setAttribute("aria-label", "Unité");
+  sel.append(new Option("aucune", "", false, !unitId));
+  for (const u of units) sel.append(new Option(u.name, u.id, false, u.id === unitId));
+  const unit = () => (sel.value === "" ? null : Number(sel.value));
+  const bump = (dir) => () => {
+    const cur = Number(String(input.value).replace(",", ".")) || 0;
+    const v = Math.round((cur + dir * qtyStep(unit() || 0)) * 1000) / 1000;
+    if (v > 0 && v <= 99999) input.value = String(v);
+  };
+  root.append(button("btn-step", "−", bump(-1)), input, button("btn-step", "+", bump(1)), sel);
+  return {
+    unit,
+    value: () => {
+      const raw = input.value.trim().replace(",", ".");
+      if (raw === "") return null;
+      const v = Number(raw);
+      return v > 0 && v <= 99999 && Math.round(v * 1000) / 1000 === v ? v : NaN;
+    },
+  };
+}
+
+function openShopEdit(it) {
+  shopEditing = it;
+  const label = SHOP_LISTS[it ? it.list : shopList].label;
+  $("shop-edit-title").textContent = it ? `Modifier l'élément (${label})` : `Ajouter à la liste ${label}`;
+  $("shop-edit-save").textContent = it ? "Enregistrer" : "Ajouter";
+  $("shop-edit-name").value = it ? it.name : "";
+  const sel = $("shop-edit-category");
+  sel.replaceChildren();
+  const current = it ? it.category_id : defaultShopCat().id;
+  for (const c of catsByName()) sel.append(new Option(c.name, c.id, false, c.id === current));
+  shopQty = qtyField($("shop-edit-qty"), it ? it.quantity : null, it ? it.unit_id : null);
+  shopEditError.textContent = "";
+  shopEditDialog.showModal();
+  if (!it) $("shop-edit-name").focus();
+}
+
+$("shop-edit-cancel").addEventListener("click", () => shopEditDialog.close());
+closeOnBackdrop(shopEditDialog);
+$("shop-edit-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("shop-edit-save").click(); }
+});
+$("shop-edit-save").addEventListener("click", async () => {
+  const name = $("shop-edit-name").value.trim();
+  if (!name || name.length > 60) { shopEditError.textContent = errorText({ code: "invalid_name" }); return; }
+  const q = shopQty.value();
+  if (Number.isNaN(q)) { shopEditError.textContent = errorText({ code: "invalid_quantity" }); return; }
+  const uid = q === null ? null : shopQty.unit();
+  const cid = Number($("shop-edit-category").value);
+  const list = shopEditing ? shopEditing.list : shopList;
+  const qtyText = q === null ? "" : uid ? ` · ${fmtQty(q, uid)}` : ` · ${fmtNum(q)}`;
+  const ok = await confirmAction(shopEditing ? "Modifier cet élément ?" : `Ajouter à la liste ${SHOP_LISTS[list].label} ?`,
+    `${name}${qtyText} · ${shopCatOf(cid).name}`);
+  if (!ok) return;
+  const btn = $("shop-edit-save");
+  btn.disabled = true;
+  try {
+    if (shopEditing) await rpc("update_shop_item", { ...auth(), iid: shopEditing.id, n: name, cid, q, uid });
+    else await rpc("add_shop_item", { ...auth(), lst: list, n: name, cid, q, uid });
+    shopEditDialog.close();
+    await refreshShop();
+  } catch (e) {
+    fail(e, shopEditError);
+  }
+  btn.disabled = false;
+});
+
+// ---- Génération de la liste France à partir des repas
+const SHOP_MODES = [
+  ["replace", "Écraser la liste", "La liste actuelle est supprimée puis remplacée."],
+  ["append", "Ajouter à la fin", "Les nouveaux éléments sont ajoutés sous la liste, sans fusion."],
+  ["merge", "Fusionner", "Les quantités s'additionnent quand c'est possible."],
+];
+const shopGenDialog = $("shop-gen-dialog");
+const shopGenError = $("shop-gen-error");
+const shopPreviewDialog = $("shop-preview-dialog");
+const shopPreviewError = $("shop-preview-error");
+let shopGenArgs = null; // { d_from, d_to, mode } en attente de confirmation
+
+function openShopGenerate() {
+  $("shop-gen-from").min = today;
+  $("shop-gen-to").min = today;
+  $("shop-gen-from").value = today;
+  $("shop-gen-to").value = addDays(today, 6);
+  const box = $("shop-gen-modes");
+  box.replaceChildren();
+  for (const [key, name, desc] of SHOP_MODES) {
+    const label = el("label", "effect-opt");
+    const radio = el("input");
+    radio.type = "radio";
+    radio.name = "shop-gen-mode";
+    radio.value = key;
+    radio.checked = key === "merge";
+    const text = el("span", "effect-text");
+    text.append(el("span", "effect-name", name), el("small", "check-meta", desc));
+    label.append(radio, text);
+    box.append(label);
+  }
+  shopGenError.textContent = "";
+  shopGenDialog.showModal();
+}
+
+$("shop-gen-cancel").addEventListener("click", () => shopGenDialog.close());
+closeOnBackdrop(shopGenDialog);
+$("shop-gen-next").addEventListener("click", async () => {
+  const d_from = $("shop-gen-from").value;
+  const d_to = $("shop-gen-to").value;
+  const mode = $("shop-gen-modes").querySelector("input:checked").value;
+  if (!d_from || !d_to || d_from < today || d_to < d_from) { shopGenError.textContent = errorText({ code: "invalid_dates" }); return; }
+  const btn = $("shop-gen-next");
+  btn.disabled = true;
+  try {
+    const res = await rpc("preview_shop_generation", { ...auth(), d_from, d_to, mode });
+    shopGenArgs = { d_from, d_to, mode };
+    shopGenDialog.close();
+    showShopPreview(res, mode);
+  } catch (e) {
+    fail(e, shopGenError);
+  }
+  btn.disabled = false;
+});
+
+// Quantité écrite avec l'unité donnée par son nom (le résultat de la base ne renvoie que des noms d'unités).
+const fmtByUnitName = (q, name) => {
+  const u = units.find((x) => x.name === name);
+  return `${fmtNum(q)}${name ? " " + (q >= 2 && u ? u.plural : name) : ""}`;
+};
+
+function showShopPreview(res, mode) {
+  $("shop-preview-title").textContent = "Générer la liste France ?";
+  const body = $("shop-preview-body");
+  body.replaceChildren();
+  const line = (text, cls) => body.append(el("p", cls || "shop-line", text));
+  const heading = (text) => body.append(el("h3", "shop-sub", text));
+  const mergedCount = res.merged.length;
+  if (mode === "replace") {
+    line(`La liste France actuelle (${res.replaced} élément${plural(res.replaced, "", "s")}) sera supprimée.`);
+  }
+  if (!res.added && !mergedCount) {
+    line("Aucun ingrédient à ajouter : les repas de ces jours sont vides ou leurs aliments n'ont pas d'ingrédients.");
+  } else {
+    line(`${res.added} élément${plural(res.added, "", "s")} ${plural(res.added, "sera ajouté", "seront ajoutés")}`
+      + (mergedCount ? `, ${mergedCount} ${plural(mergedCount, "fusionné", "fusionnés")}.` : "."));
+  }
+  if (mergedCount) {
+    heading("Fusions");
+    for (const m of res.merged) {
+      line(m.before === null ? `${m.name} : déjà dans la liste (sans quantité)`
+        : `${m.name} : ${fmtByUnitName(m.before, m.unit)} + ${fmtByUnitName(m.add, m.unit)} = ${fmtByUnitName(m.after, m.unit)}`, "shop-line shop-merge");
+    }
+  }
+  if (res.split.length || res.no_qty.length) {
+    heading("À vérifier");
+    for (const name of res.split) line(`${name} : la ligne existante est cochée, une nouvelle ligne sera créée`, "shop-line shop-warn");
+    if (res.no_qty.length) {
+      line(`${res.no_qty.length} élément${plural(res.no_qty.length, "", "s")} sans quantité (${res.no_qty.join(", ")})`, "shop-line shop-warn");
+    }
+  }
+  shopPreviewError.textContent = "";
+  $("shop-preview-yes").disabled = false;
+  shopPreviewDialog.showModal();
+}
+
+$("shop-preview-no").addEventListener("click", () => shopPreviewDialog.close());
+closeOnBackdrop(shopPreviewDialog);
+$("shop-preview-yes").addEventListener("click", async () => {
+  const btn = $("shop-preview-yes");
+  btn.disabled = true;
+  try {
+    await rpc("generate_shop", { ...auth(), ...shopGenArgs });
+    shopPreviewDialog.close();
+    shopList = "france";
+    await refreshShop();
+  } catch (e) {
+    fail(e, shopPreviewError);
+    btn.disabled = false;
+  }
+});
+
+// ------------------------------------------------- Admin : catégories de courses
+function renderCategoriesAdmin(root) {
+  root.append(button("btn-primary admin-add", "+ Ajouter une catégorie", () => openCategoryDialog(null)));
+  const list = el("ul", "food-list");
+  root.append(list);
+  if (!shopCats.length) {
+    list.append(el("li", "empty", "Les listes de courses ne sont pas encore activées dans la base."));
+    return;
+  }
+  for (const c of catsByName()) {
+    const li = el("li", "food-row");
+    const name = el("span", "fname", c.name);
+    name.append(el("span", "cls-pill", `Carrefour ${c.pos_carrefour}`), el("span", "cls-pill", `Coop ${c.pos_coop}`));
+    if (c.no_merge) name.append(el("span", "cls-pill", "ne s'additionne pas"));
+    if (c.is_default) name.append(el("span", "cls-pill", "par défaut"));
+    const uses = Number(c.uses) || 0;
+    name.append(el("small", "fmeta", uses ? `utilisée ${uses} fois (ingrédients et éléments de liste)` : "non utilisée"));
+    li.append(name, button("btn-sm", "Modifier", () => openCategoryDialog(c)));
+    if (!c.is_default) li.append(button("btn-sm danger", "Supprimer", () => deleteCategory(c)));
+    list.append(li);
+  }
+}
+
+async function deleteCategory(c) {
+  if (!(Number(c.uses) > 0)) {
+    const ok = await confirmAction("Êtes-vous sûr de vouloir supprimer cette catégorie ?", c.name);
+    if (!ok) return;
+  }
+  try {
+    await rpc("delete_shop_category", { ...auth(), cid: c.id });
+    statusEl.textContent = "";
+    await refreshShop();
+  } catch (e) {
+    if (e.code === "category_in_use") {
+      const { n, items } = usageOf(e);
+      showUsage("Suppression impossible", c.name,
+        `Cette catégorie est utilisée ${n || items.length} fois. Changez la catégorie de ces ingrédients et de ces éléments de liste avant de la supprimer.`, items);
+    } else {
+      fail(e);
+    }
+  }
+}
+
+const categoryDialog = $("category-dialog");
+const categoryError = $("category-error");
+let editingCategory = null;
+
+function openCategoryDialog(c) {
+  editingCategory = c;
+  $("category-title").textContent = c ? "Modifier la catégorie" : "Nouvelle catégorie";
+  $("category-save").textContent = c ? "Enregistrer" : "Ajouter";
+  $("category-name").value = c ? c.name : "";
+  $("category-carrefour").value = c ? c.pos_carrefour : shopCats.length + 1; // à l'ajout : en dernier par défaut
+  $("category-coop").value = c ? c.pos_coop : shopCats.length + 1;
+  $("category-nomerge").checked = c ? c.no_merge : false;
+  categoryError.textContent = "";
+  categoryDialog.showModal();
+  $("category-name").focus();
+}
+
+$("category-cancel").addEventListener("click", () => categoryDialog.close());
+closeOnBackdrop(categoryDialog);
+$("category-save").addEventListener("click", async () => {
+  const name = $("category-name").value.trim();
+  if (!name || name.length > 40) { categoryError.textContent = errorText({ code: "invalid_name" }); return; }
+  const pc = Number($("category-carrefour").value);
+  const pk = Number($("category-coop").value);
+  if (!Number.isInteger(pc) || pc < 1 || !Number.isInteger(pk) || pk < 1) {
+    categoryError.textContent = errorText({ code: "invalid_position" });
+    return;
+  }
+  const nm = $("category-nomerge").checked;
+  const btn = $("category-save");
+  btn.disabled = true;
+  try {
+    if (editingCategory) await rpc("update_shop_category", { ...auth(), cid: editingCategory.id, n: name, pc, pk, nm });
+    else await rpc("add_shop_category", { ...auth(), n: name, pc, pk, nm });
+    categoryDialog.close();
+    await refreshShop();
+  } catch (e) {
+    fail(e, categoryError);
+  }
+  btn.disabled = false;
+});
+
 // ------------------------------------------------------------------ Session
 function storeSession(r) {
   const value = JSON.stringify({ u: userId, p: password });
@@ -1495,6 +2017,12 @@ function lock() {
   mealDialog.open && mealDialog.close();
   foodDialog.open && foodDialog.close();
   ingredientDialog.open && ingredientDialog.close();
+  for (const d of [shopGenDialog, shopPreviewDialog, shopItemDialog, shopEditDialog, categoryDialog]) d.open && d.close();
+  try { sessionStorage.removeItem(SORT_KEY); } catch {}
+  shopSorts = defaultShopSorts();
+  shopList = "france";
+  shopCats = [];
+  shopItems = [];
   usageDialog.open && usageDialog.close();
   app.hidden = true;
   todayBtn.hidden = true;
