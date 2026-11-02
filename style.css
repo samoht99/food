@@ -345,3 +345,25 @@ div.shop-main { cursor: default; }
   padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink);
 }
 #ingredient-category select, #ingredient-unit select { max-width: 160px; }
+
+/* Filtres de l'Admin : recherche, puces des filtres actifs, panneau de valeurs */
+.fbar { margin: 0 0 10px; }
+.fchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; }
+.fchip { display: inline-flex; align-items: center; border-radius: 999px; background: var(--accent); color: #fff; }
+.fchip.open { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent-dark); }
+.fchip-main { border: 0; background: none; color: inherit; cursor: pointer; font-size: .85rem; padding: 5px 4px 5px 12px; }
+.fchip-x { width: 22px; height: 22px; margin: 0 4px 0 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .25); color: #fff; cursor: pointer; font-size: .7rem; line-height: 1; padding: 0; }
+.fadd { border: 1px dashed var(--accent); background: #fff; color: var(--accent-dark); border-radius: 999px; padding: 5px 12px; font-size: .85rem; cursor: pointer; }
+.fadd.open { background: var(--accent-soft); }
+.flink { border: 0; background: none; color: var(--accent-dark); text-decoration: underline; cursor: pointer; font-size: .8rem; padding: 4px; }
+.fpanel:empty { display: none; }
+.fpanel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 6px; margin: 0 0 8px; }
+.fpanel-title { margin: 0; padding: 4px 10px; color: var(--ink-soft); font-size: .78rem; }
+.fopt { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; background: none; border-radius: 10px; padding: 9px 10px; cursor: pointer; }
+.fopt:hover { background: var(--bg); }
+.fmark { width: 18px; height: 18px; flex: none; border: 1.5px solid var(--ink-soft); display: inline-flex; align-items: center; justify-content: center; font-size: .7rem; color: #fff; }
+.fmark.cb { border-radius: 5px; }
+.fmark.rd { border-radius: 50%; }
+.fopt.sel .fmark { background: var(--accent); border-color: var(--accent); }
+.fdone { display: block; margin: 4px 4px 2px auto; padding: 5px 16px; border-radius: 999px; border: 1.5px solid var(--accent); background: #fff; color: var(--accent-dark); cursor: pointer; }
+.fcount { margin: 0 0 0 4px; color: var(--ink-soft); font-size: .8rem; }

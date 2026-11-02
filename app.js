@@ -73,9 +73,6 @@ let ingredients = []; // [{ id, name, uses }] : liste des ingrédients (admin un
 let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constraints" | "categories"
 let currentTab = "home";
 let today = "";
-let adminClassId = null;
-let adminSearch = "";
-let adminUsage = "all"; // filtre d'utilisation des listes Admin : "all" | "used" | "unused"
 let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
 let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
 let adminCatSort = "alpha"; // tri de la liste Admin > Catégories : "alpha" | "carrefour" | "coop" (affichage seulement)
@@ -227,7 +224,6 @@ async function loadCatalog() {
     ...f,
     ingredients: (f.ingredients || []).map((i) => (typeof i === "string" ? { name: i, quantity: null, unit_id: undefined } : i)),
   }));
-  if (!classes.some((c) => c.id === adminClassId)) adminClassId = classes[0] ? classes[0].id : null;
 }
 
 // Les contraintes de jour sont accessoires : si leur chargement échoue (sauf mot de passe refusé),
@@ -991,21 +987,97 @@ function foodFormError(cids, ings) {
   return null;
 }
 
-// Filtre d'utilisation (Tous | Utilisés | Non utilisés) des listes Admin ; il se combine avec la recherche.
-function usageFilter(onChange) {
-  const seg = el("div", "segment mini");
-  for (const [key, label] of [["all", "Tous"], ["used", "Utilisés"], ["unused", "Non utilisés"]]) {
-    const b = button("seg" + (adminUsage === key ? " on" : ""), label, () => {
-      adminUsage = key;
-      for (const x of seg.children) x.classList.toggle("on", x === b);
-      onChange();
-    });
-    seg.append(b);
-  }
-  return seg;
-}
+// ------------------------------------------------------------ Filtres de l'Admin
+// Chaque liste de l'Admin a une recherche et un bouton « + Filtre » : on choisit les filtres à appliquer, puis leurs
+// valeurs. Les filtres actifs s'affichent en puces. Ils se combinent en ET ; les valeurs d'un filtre à choix multiples
+// se combinent en OU (aucune valeur choisie : tout passe). Gardés par section jusqu'au rechargement ou à la déconnexion.
+let adminFilters = {}; // section -> { q: recherche, f: { clé de filtre: [valeurs choisies en texte] } }
+const filterState = (section) => (adminFilters[section] = adminFilters[section] || { q: "", f: {} });
 
-const matchesUsage = (uses) => adminUsage === "all" || (adminUsage === "used") === (Number(uses) > 0);
+// Filtre « utilisation » (labels : [utilisé, non utilisé]).
+const usageDef = (labels) => ({ k: "usage", label: "Utilisation", type: "one", options: [["used", labels[0]], ["unused", labels[1]]] });
+const hasUsage = (st, uses) => {
+  const v = (st.f.usage || [])[0];
+  return !v || (v === "used") === (Number(uses) > 0);
+};
+// Vrai si aucune valeur n'est choisie pour le filtre k, ou si l'une des valeurs de l'élément est choisie.
+const inFilter = (st, k, values) => {
+  const s = st.f[k] || [];
+  return !s.length || values.some((v) => s.includes(String(v)));
+};
+
+// Barre de recherche et de filtres d'une section. defs : [{ k, label, type: "one" | "multi", options: [[valeur, texte]] }].
+// onChange() est appelé à chaque changement ; bar.setCount(n) affiche le nombre de résultats ; bar.isFiltering() dit
+// si une recherche ou un filtre est actif.
+function filterBar(section, defs, onChange) {
+  const st = filterState(section);
+  const root = el("div", "fbar");
+  const search = el("input", "search");
+  search.type = "search";
+  search.placeholder = "Rechercher";
+  search.value = st.q;
+  search.addEventListener("input", () => { st.q = search.value; draw(); onChange(); });
+  const chips = el("div", "fchips");
+  const panel = el("div", "fpanel");
+  const info = el("p", "fcount");
+  root.append(search, chips, panel, info);
+  let open = null; // null | "+" (liste des filtres) | clé du filtre dont on choisit les valeurs
+  let count = 0;
+
+  const chosen = (k) => st.f[k] || [];
+  const activeCount = () => (st.q.trim() ? 1 : 0) + defs.filter((d) => chosen(d.k).length).length;
+  root.isFiltering = () => activeCount() > 0;
+  root.setCount = (n) => { count = n; draw(); };
+
+  function chipText(d) {
+    const s = chosen(d.k);
+    if (!s.length) return `${d.label} : …`;
+    const first = d.options.find((o) => o[0] === s[0]);
+    return `${d.label} : ${first ? first[1] : ""}${s.length > 1 ? ` +${s.length - 1}` : ""}`;
+  }
+
+  function draw() {
+    chips.replaceChildren();
+    panel.replaceChildren();
+    const active = defs.filter((d) => st.f[d.k] !== undefined);
+    const free = defs.filter((d) => st.f[d.k] === undefined);
+    for (const d of active) {
+      const chip = el("span", "fchip" + (open === d.k ? " open" : ""));
+      const x = button("fchip-x", "✕", () => { delete st.f[d.k]; if (open === d.k) open = null; draw(); onChange(); });
+      x.setAttribute("aria-label", `Retirer le filtre ${d.label}`);
+      chip.append(button("fchip-main", chipText(d), () => { open = open === d.k ? null : d.k; draw(); }), x);
+      chips.append(chip);
+    }
+    if (free.length) chips.append(button("fadd" + (open === "+" ? " open" : ""), "+ Filtre ▾", () => { open = open === "+" ? null : "+"; draw(); }));
+    if (active.length || st.q.trim()) {
+      chips.append(button("flink", "Tout effacer", () => { st.q = ""; st.f = {}; search.value = ""; open = null; draw(); onChange(); }));
+    }
+    if (open === "+") {
+      panel.append(el("p", "fpanel-title", "Filtrer par…"));
+      for (const d of free) panel.append(button("fopt", d.label, () => { st.f[d.k] = []; open = d.k; draw(); }));
+    } else if (open) {
+      const d = defs.find((x) => x.k === open);
+      panel.append(el("p", "fpanel-title", d.label + (d.type === "multi" ? " (plusieurs choix : l'un ou l'autre)" : "")));
+      for (const [value, text] of d.options) {
+        const on = chosen(d.k).includes(value);
+        const opt = button("fopt" + (on ? " sel" : ""), "", () => {
+          const s = chosen(d.k).slice();
+          if (d.type === "one") st.f[d.k] = [value];
+          else { const i = s.indexOf(value); if (i >= 0) s.splice(i, 1); else s.push(value); st.f[d.k] = s; }
+          draw();
+          onChange();
+        });
+        opt.append(el("span", "fmark " + (d.type === "multi" ? "cb" : "rd"), on ? "✓" : ""), document.createTextNode(text));
+        panel.append(opt);
+      }
+      panel.append(button("fdone", "OK", () => { if (!chosen(d.k).length) delete st.f[d.k]; open = null; draw(); onChange(); }));
+    }
+    const a = activeCount();
+    info.textContent = `${count} résultat${count > 1 ? "s" : ""}` + (a ? ` · ${a} filtre${a > 1 ? "s" : ""}` : "");
+  }
+  draw();
+  return root;
+}
 
 function renderAdmin() {
   const root = $("tab-admin");
@@ -1015,8 +1087,6 @@ function renderAdmin() {
   for (const [key, label] of [["foods", "Aliments"], ["ingredients", "Ingrédients"], ["constraints", "Contraintes"], ["categories", "Catégories"]]) {
     seg.append(button("seg" + (adminSection === key ? " on" : ""), label, () => {
       adminSection = key;
-      adminSearch = "";
-      adminUsage = "all";
       renderAdmin();
     }));
   }
@@ -1029,46 +1099,35 @@ function renderAdmin() {
 
 function renderFoodsAdmin(root) {
 
-  const chips = el("div", "chips");
-  for (const c of classes) {
-    chips.append(button("chip" + (c.id === adminClassId ? " on" : ""), c.name, () => {
-      adminClassId = c.id;
-      adminSearch = "";
-      renderAdmin();
-    }));
-  }
-  root.append(chips);
-
   // Nouvel aliment : un popup (le même que pour la modification) avec un nom, une ou plusieurs classes
   // (la classe affichée est cochée d'office) et les ingrédients.
   root.append(button("btn-primary admin-add", "+ Ajouter un aliment", () => openFoodDialog(null)));
 
-  const search = el("input", "search");
-  search.type = "search";
-  search.placeholder = "Rechercher";
-  search.value = adminSearch;
-  root.append(search);
-
+  const st = filterState("foods");
+  const bar = filterBar("foods", [
+    usageDef(["Utilisés", "Non utilisés"]),
+    { k: "cls", label: "Classe", type: "multi", options: classes.map((c) => [String(c.id), c.name]) },
+  ], () => fill());
   const list = el("ul", "food-list");
-  const filter = usageFilter(() => fill());
-  root.append(filter, list);
+  root.append(bar, list);
   const fill = () => {
-    const q = adminSearch.trim().toLowerCase();
+    const q = st.q.trim();
     const rows = foods
-      .filter((f) => f.class_ids.includes(adminClassId) && fold(f.name).includes(fold(q)) && matchesUsage(f.uses))
+      .filter((f) => fold(f.name).includes(fold(q)) && hasUsage(st, f.uses) && inFilter(st, "cls", f.class_ids))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    bar.setCount(rows.length);
     list.replaceChildren();
     if (!rows.length) {
-      const li = el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucun aliment dans cette classe");
+      const li = el("li", "empty", bar.isFiltering() ? "Aucun résultat" : "Aucun aliment pour le moment");
       list.append(li);
       return;
     }
     for (const f of rows) {
       const li = el("li", "food-row");
       const name = el("span", "fname", f.name);
-      const others = f.class_ids.filter((id) => id !== adminClassId)
+      const others = f.class_ids
         .map((id) => (classes.find((c) => c.id === id) || {}).name).filter(Boolean);
-      // Les autres classes de l'aliment : des pastilles à droite du nom.
+      // Les classes de l'aliment : des pastilles à droite du nom.
       for (const cname of others) name.append(el("span", "cls-pill", cname));
       const uses = Number(f.uses) || 0;
       name.append(el("small", "fmeta", uses ? `utilisé dans ${uses} repas` : "non utilisé"));
@@ -1080,7 +1139,6 @@ function renderFoodsAdmin(root) {
       list.append(li);
     }
   };
-  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
   fill();
 }
 
@@ -1150,22 +1208,27 @@ function renderIngredientsAdmin(root) {
   // Nouvel ingrédient : un popup (le même que pour la modification) avec un nom et une unité.
   root.append(button("btn-primary admin-add", "+ Ajouter un ingrédient", () => openIngredientDialog(null)));
 
-  const search = el("input", "search");
-  search.type = "search";
-  search.placeholder = "Rechercher";
-  search.value = adminSearch;
-  root.append(search);
-
+  const st = filterState("ingredients");
+  const defs = [usageDef(["Utilisés", "Non utilisés"])];
+  if (shopCats.length) {
+    defs.push({ k: "cat", label: "Catégorie de courses", type: "multi",
+      options: [["none", "Sans catégorie"], ...catsByName().filter((c) => !c.is_default).map((c) => [String(c.id), c.name])] });
+  }
+  if (units.length) defs.push({ k: "unit", label: "Unité de mesure", type: "multi", options: units.map((u) => [String(u.id), u.name]) });
+  const bar = filterBar("ingredients", defs, () => fill());
   const list = el("ul", "food-list");
-  const filter = usageFilter(() => fill());
-  root.append(filter, list);
+  root.append(bar, list);
   const fill = () => {
-    const q = adminSearch.trim().toLowerCase();
-    const rows = ingredients.filter((i) => fold(i.name).includes(fold(q)) && matchesUsage(i.uses))
+    const q = st.q.trim();
+    const rows = ingredients
+      .filter((i) => fold(i.name).includes(fold(q)) && hasUsage(st, i.uses)
+        && inFilter(st, "cat", [i.category_id == null ? "none" : i.category_id])
+        && inFilter(st, "unit", i.unit_id === undefined ? [] : [i.unit_id]))
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    bar.setCount(rows.length);
     list.replaceChildren();
     if (!rows.length) {
-      list.append(el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucun ingrédient pour le moment"));
+      list.append(el("li", "empty", bar.isFiltering() ? "Aucun résultat" : "Aucun ingrédient pour le moment"));
       return;
     }
     for (const i of rows) {
@@ -1181,7 +1244,6 @@ function renderIngredientsAdmin(root) {
       list.append(li);
     }
   };
-  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
   fill();
 }
 
@@ -1314,21 +1376,17 @@ function renderConstraintsAdmin(root) {
   // Nouvelle contrainte : un popup (le même que pour la modification) avec un nom et un effet.
   root.append(button("btn-primary admin-add", "+ Ajouter une contrainte", () => openConstraintDialog(null)));
 
-  const search = el("input", "search");
-  search.type = "search";
-  search.placeholder = "Rechercher";
-  search.value = adminSearch;
-  root.append(search);
-
+  const st = filterState("constraints");
+  const bar = filterBar("constraints", [usageDef(["Utilisées", "Non utilisées"])], () => fill());
   const list = el("ul", "food-list");
-  const filter = usageFilter(() => fill());
-  root.append(filter, list);
+  root.append(bar, list);
   const fill = () => {
-    const q = adminSearch.trim().toLowerCase();
-    const rows = constraints.filter((k) => fold(k.name).includes(fold(q)) && matchesUsage(k.uses));
+    const q = st.q.trim();
+    const rows = constraints.filter((k) => fold(k.name).includes(fold(q)) && hasUsage(st, k.uses));
+    bar.setCount(rows.length);
     list.replaceChildren();
     if (!rows.length) {
-      list.append(el("li", "empty", q || adminUsage !== "all" ? "Aucun résultat" : "Aucune contrainte pour le moment"));
+      list.append(el("li", "empty", bar.isFiltering() ? "Aucun résultat" : "Aucune contrainte pour le moment"));
       return;
     }
     for (const k of rows) {
@@ -1353,7 +1411,6 @@ function renderConstraintsAdmin(root) {
       list.append(li);
     }
   };
-  search.addEventListener("input", () => { adminSearch = search.value; fill(); });
   fill();
 }
 
@@ -1460,7 +1517,7 @@ function openFoodDialog(f) {
   $("food-dialog-title").textContent = f ? "Modifier l'aliment" : "Nouvel aliment";
   $("food-edit-save").textContent = f ? "Enregistrer" : "Ajouter";
   $("food-edit-name").value = f ? f.name : "";
-  const classIds = f ? f.class_ids : [adminClassId]; // à l'ajout : la classe affichée est cochée d'office
+  const classIds = f ? f.class_ids : []; // à l'ajout : aucune classe cochée, on choisit
   editChecks = classChecks(new Set(classIds));
   $("food-edit-classes").replaceChildren(editChecks);
   // Ingrédients avec leur quantité pour 1 portion (au moins 1 pour tout aliment) ; à partir de 2 ingrédients
@@ -1893,6 +1950,11 @@ $("shop-preview-yes").addEventListener("click", async () => {
 // ------------------------------------------------- Admin : catégories de courses
 function renderCategoriesAdmin(root) {
   root.append(button("btn-primary admin-add", "+ Ajouter une catégorie", () => openCategoryDialog(null)));
+  const st = filterState("categories");
+  const bar = filterBar("categories", [
+    { k: "merge", label: "Addition", type: "one", options: [["merge", "S'additionne"], ["nomerge", "Ne s'additionne pas"]] },
+  ], () => draw());
+  root.append(bar);
   // Tri de la liste : alphabétique ou ordre d'un des deux tris custom (rangs de 1 à N). Affichage seulement.
   const sorts = el("div", "segment mini");
   for (const [key, label] of [["alpha", "A → Z"], ["carrefour", "Carrefour Segny"], ["coop", "Coop Vich"]]) {
@@ -1906,7 +1968,15 @@ function renderCategoriesAdmin(root) {
     return;
   }
   const order = { carrefour: (a, b) => a.pos_carrefour - b.pos_carrefour, coop: (a, b) => a.pos_coop - b.pos_coop };
-  for (const c of adminCatSort === "alpha" ? catsByName() : [...shopCats].sort(order[adminCatSort])) {
+  const draw = () => {
+  list.replaceChildren();
+  const q = fold(st.q.trim());
+  const m = (st.f.merge || [])[0];
+  const rows = (adminCatSort === "alpha" ? catsByName() : [...shopCats].sort(order[adminCatSort]))
+    .filter((c) => fold(c.name).includes(q) && (!m || (m === "nomerge") === c.no_merge));
+  bar.setCount(rows.length);
+  if (!rows.length) list.append(el("li", "empty", bar.isFiltering() ? "Aucun résultat" : "Aucune catégorie"));
+  for (const c of rows) {
     const li = el("li", "food-row");
     const name = el("span", "fname", c.name);
     name.append(el("span", "cls-pill", `Carrefour ${c.pos_carrefour}`), el("span", "cls-pill", `Coop ${c.pos_coop}`));
@@ -1918,6 +1988,8 @@ function renderCategoriesAdmin(root) {
     if (!c.is_default) li.append(button("btn-sm danger", "Supprimer", () => deleteCategory(c)));
     list.append(li);
   }
+  };
+  draw();
 }
 
 async function deleteCategory(c) {
@@ -2029,6 +2101,7 @@ function lock() {
   try { sessionStorage.removeItem(SORT_KEY); } catch {}
   shopSorts = defaultShopSorts();
   adminCatSort = "alpha";
+  adminFilters = {};
   shopList = "france";
   shopCats = [];
   shopItems = [];
