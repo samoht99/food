@@ -20,6 +20,7 @@
     <main>
       <section id="tab-home" class="tab"></section>
       <section id="tab-meals" class="tab" hidden></section>
+      <section id="tab-shop" class="tab" hidden></section>
       <section id="tab-admin" class="tab" hidden></section>
     </main>
 
@@ -28,6 +29,7 @@
     <nav id="tabs" class="tabs" aria-label="Navigation">
       <button type="button" data-tab="home" class="on">Accueil</button>
       <button type="button" data-tab="meals">Repas</button>
+      <button type="button" data-tab="shop" id="tab-shop-btn" hidden>Courses</button>
       <button type="button" data-tab="admin" id="tab-admin-btn" hidden>Admin</button>
     </nav>
   </div>
@@ -84,6 +86,7 @@
     <h2 id="ingredient-title" class="dialog-title">Modifier l'ingrédient</h2>
     <input id="ingredient-name" class="tag-input" type="text" maxlength="60" autocomplete="off" placeholder="Nom de l'ingrédient">
     <label class="unit-row">Unité <span id="ingredient-unit"></span></label>
+    <label class="unit-row" id="ingredient-category-row">Catégorie de courses <span id="ingredient-category"></span></label>
     <p id="ingredient-error" class="error" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" id="ingredient-cancel" class="btn-no">Annuler</button>
@@ -105,6 +108,74 @@
     <div class="dialog-actions">
       <button type="button" id="food-edit-cancel" class="btn-no">Annuler</button>
       <button type="button" id="food-edit-save" class="btn-yes">Enregistrer</button>
+    </div>
+  </dialog>
+
+  <dialog id="shop-gen-dialog" class="dialog" aria-labelledby="shop-gen-title">
+    <h2 id="shop-gen-title" class="dialog-title">Générer la liste France</h2>
+    <p class="dialog-hint">Tous les repas (midi et soir) des jours choisis sont lus. Seuls les jours à partir d'aujourd'hui sont possibles.</p>
+    <div class="shop-dates">
+      <label>Du<input id="shop-gen-from" type="date"></label>
+      <label>Au<input id="shop-gen-to" type="date"></label>
+    </div>
+    <div id="shop-gen-modes" class="shop-modes"></div>
+    <p id="shop-gen-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="shop-gen-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="shop-gen-next" class="btn-yes">Continuer</button>
+    </div>
+  </dialog>
+
+  <dialog id="shop-preview-dialog" class="dialog" aria-labelledby="shop-preview-title">
+    <h2 id="shop-preview-title" class="dialog-title"></h2>
+    <div id="shop-preview-body" class="shop-preview"></div>
+    <p id="shop-preview-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="shop-preview-no" class="btn-no">Annuler</button>
+      <button type="button" id="shop-preview-yes" class="btn-yes">Générer</button>
+    </div>
+  </dialog>
+
+  <dialog id="shop-item-dialog" class="dialog" aria-labelledby="shop-item-title">
+    <h2 id="shop-item-title" class="dialog-title"></h2>
+    <p id="shop-item-meta" class="dialog-hint"></p>
+    <div id="shop-item-menu" class="shop-menu"></div>
+    <p id="shop-item-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="shop-item-close" class="btn-yes">Fermer</button>
+    </div>
+  </dialog>
+
+  <dialog id="shop-edit-dialog" class="dialog" aria-labelledby="shop-edit-title">
+    <h2 id="shop-edit-title" class="dialog-title"></h2>
+    <div class="form-grid">
+      <label for="shop-edit-name">Nom</label>
+      <input id="shop-edit-name" type="text" maxlength="60" autocomplete="off">
+      <label for="shop-edit-category">Catégorie</label>
+      <select id="shop-edit-category"></select>
+      <span class="form-label">Quantité</span>
+      <div id="shop-edit-qty" class="shop-qty-row"></div>
+    </div>
+    <p id="shop-edit-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="shop-edit-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="shop-edit-save" class="btn-yes">Ajouter</button>
+    </div>
+  </dialog>
+
+  <dialog id="category-dialog" class="dialog" aria-labelledby="category-title">
+    <h2 id="category-title" class="dialog-title">Modifier la catégorie</h2>
+    <div class="shop-cat-form">
+      <label>Nom<input id="category-name" type="text" maxlength="40" autocomplete="off" placeholder="Nom de la catégorie"></label>
+      <label>Position tri custom Carrefour Segny<input id="category-carrefour" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label>Position tri custom Coop Vich<input id="category-coop" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label class="class-check"><input id="category-nomerge" type="checkbox"><span>Ne s'additionne pas<small class="check-meta">Chaque ligne reste séparée (viande, poisson...).</small></span></label>
+    </div>
+    <p class="dialog-hint">Si une autre catégorie a déjà cette position, elle et les suivantes sont décalées d'un cran.</p>
+    <p id="category-error" class="error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="category-cancel" class="btn-no">Annuler</button>
+      <button type="button" id="category-save" class="btn-yes">Enregistrer</button>
     </div>
   </dialog>
 
