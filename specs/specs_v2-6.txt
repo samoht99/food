@@ -1,0 +1,8 @@
+Specs V2-6 : tri de la liste des catégories de courses
+(nouveautés uniquement ; le reste est inchangé, voir specs V1 et V2-1 à V2-5)
+
+1- Admin > Catégories
+1-1- trois boutons de tri au-dessus de la liste : « A → Z » (par défaut), « Carrefour Segny » (par position du tri custom Carrefour, de 1 à N) et « Coop Vich » (par position du tri custom Coop, de 1 à N)
+1-2- le tri ne change que l'affichage : rien n'est modifié en base, et les positions de chaque catégorie restent affichées en pastilles dans les trois cas
+1-3- le tri choisi n'est pas conservé : il revient à « A → Z » quand on recharge le site ou qu'on se déconnecte
+1-4- aucune migration : seul le site change
