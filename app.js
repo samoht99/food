@@ -1039,15 +1039,19 @@ function filterBar(section, defs, onChange) {
     chips.replaceChildren();
     panel.replaceChildren();
     const active = defs.filter((d) => st.f[d.k] !== undefined);
-    const free = defs.filter((d) => st.f[d.k] === undefined);
+    const free = defs.filter((d) => !d.sort && st.f[d.k] === undefined);
+    const sortDef = defs.find((d) => d.sort); // le tri a son propre bouton, séparé des filtres
     for (const d of active) {
       const chip = el("span", "fchip" + (open === d.k ? " open" : ""));
       const x = button("fchip-x", "✕", () => { delete st.f[d.k]; if (open === d.k) open = null; draw(); onChange(); });
-      x.setAttribute("aria-label", `Retirer le filtre ${d.label}`);
+      x.setAttribute("aria-label", d.sort ? "Retirer le tri" : `Retirer le filtre ${d.label}`);
       chip.append(button("fchip-main", chipText(d), () => { open = open === d.k ? null : d.k; draw(); }), x);
       chips.append(chip);
     }
     if (free.length) chips.append(button("fadd" + (open === "+" ? " open" : ""), "+ Filtre ▾", () => { open = open === "+" ? null : "+"; draw(); }));
+    if (sortDef && st.f[sortDef.k] === undefined) {
+      chips.append(button("fadd" + (open === sortDef.k ? " open" : ""), "+ Tri ▾", () => { open = open === sortDef.k ? null : sortDef.k; draw(); }));
+    }
     if (active.length || st.q.trim()) {
       chips.append(button("flink", "Tout effacer", () => { st.q = ""; st.f = {}; search.value = ""; open = null; draw(); onChange(); }));
     }
@@ -1056,20 +1060,21 @@ function filterBar(section, defs, onChange) {
       for (const d of free) panel.append(button("fopt", d.label, () => { st.f[d.k] = []; open = d.k; draw(); }));
     } else if (open) {
       const d = defs.find((x) => x.k === open);
-      panel.append(el("p", "fpanel-title", d.label + (d.type === "multi" ? " (plusieurs choix : l'un ou l'autre)" : "")));
+      panel.append(el("p", "fpanel-title", d.sort ? "Trier par… (sans tri : A → Z)" : d.label + (d.type === "multi" ? " (plusieurs choix : l'un ou l'autre)" : "")));
       for (const [value, text] of d.options) {
         const on = chosen(d.k).includes(value);
         const opt = button("fopt" + (on ? " sel" : ""), "", () => {
           const s = chosen(d.k).slice();
           if (d.type === "one") st.f[d.k] = [value];
           else { const i = s.indexOf(value); if (i >= 0) s.splice(i, 1); else s.push(value); st.f[d.k] = s; }
+          if (d.sort) open = null; // un tri se choisit en un clic
           draw();
           onChange();
         });
         opt.append(el("span", "fmark " + (d.type === "multi" ? "cb" : "rd"), on ? "✓" : ""), document.createTextNode(text));
         panel.append(opt);
       }
-      panel.append(button("fdone", "OK", () => { if (!chosen(d.k).length) delete st.f[d.k]; open = null; draw(); onChange(); }));
+      if (!d.sort) panel.append(button("fdone", "OK", () => { if (!chosen(d.k).length) delete st.f[d.k]; open = null; draw(); onChange(); }));
     }
     const a = activeCount();
     info.textContent = `${count} résultat${count > 1 ? "s" : ""}` + (a ? ` · ${a} filtre${a > 1 ? "s" : ""}` : "");
