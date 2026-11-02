@@ -75,7 +75,6 @@ let currentTab = "home";
 let today = "";
 let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
 let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
-let adminCatSort = "alpha"; // tri de la liste Admin > Catégories : "alpha" | "carrefour" | "coop" (affichage seulement)
 let shopList = "france";// liste affichée : "france" | "suisse"
 const SHOP_LISTS = {
   france: { label: "France", custom: "Carrefour Segny", pos: "pos_carrefour" },
@@ -1025,7 +1024,7 @@ function filterBar(section, defs, onChange) {
   let count = 0;
 
   const chosen = (k) => st.f[k] || [];
-  const activeCount = () => (st.q.trim() ? 1 : 0) + defs.filter((d) => chosen(d.k).length).length;
+  const activeCount = () => (st.q.trim() ? 1 : 0) + defs.filter((d) => !d.sort && chosen(d.k).length).length;
   root.isFiltering = () => activeCount() > 0;
   root.setCount = (n) => { count = n; draw(); };
 
@@ -1953,14 +1952,11 @@ function renderCategoriesAdmin(root) {
   const st = filterState("categories");
   const bar = filterBar("categories", [
     { k: "merge", label: "Addition", type: "one", options: [["merge", "S'additionne"], ["nomerge", "Ne s'additionne pas"]] },
+    // Tri de la liste (A → Z par défaut) : ordre d'un des deux tris custom (rangs de 1 à N). Affichage seulement,
+    // pas compté comme un filtre.
+    { k: "sort", label: "Tri", type: "one", sort: true, options: [["carrefour", "Carrefour Segny"], ["coop", "Coop Vich"]] },
   ], () => draw());
   root.append(bar);
-  // Tri de la liste : alphabétique ou ordre d'un des deux tris custom (rangs de 1 à N). Affichage seulement.
-  const sorts = el("div", "segment mini");
-  for (const [key, label] of [["alpha", "A → Z"], ["carrefour", "Carrefour Segny"], ["coop", "Coop Vich"]]) {
-    sorts.append(button("seg" + (adminCatSort === key ? " on" : ""), label, () => { adminCatSort = key; renderAdmin(); }));
-  }
-  root.append(sorts);
   const list = el("ul", "food-list");
   root.append(list);
   if (!shopCats.length) {
@@ -1972,7 +1968,8 @@ function renderCategoriesAdmin(root) {
   list.replaceChildren();
   const q = fold(st.q.trim());
   const m = (st.f.merge || [])[0];
-  const rows = (adminCatSort === "alpha" ? catsByName() : [...shopCats].sort(order[adminCatSort]))
+  const sortKey = (st.f.sort || [])[0];
+  const rows = (sortKey ? [...shopCats].sort(order[sortKey]) : catsByName())
     .filter((c) => fold(c.name).includes(q) && (!m || (m === "nomerge") === c.no_merge));
   bar.setCount(rows.length);
   if (!rows.length) list.append(el("li", "empty", bar.isFiltering() ? "Aucun résultat" : "Aucune catégorie"));
@@ -2100,7 +2097,6 @@ function lock() {
   for (const d of [shopGenDialog, shopPreviewDialog, shopItemDialog, shopEditDialog, categoryDialog]) d.open && d.close();
   try { sessionStorage.removeItem(SORT_KEY); } catch {}
   shopSorts = defaultShopSorts();
-  adminCatSort = "alpha";
   adminFilters = {};
   shopList = "france";
   shopCats = [];
