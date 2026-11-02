@@ -78,7 +78,8 @@ let adminSearch = "";
 let adminUsage = "all"; // filtre d'utilisation des listes Admin : "all" | "used" | "unused"
 let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
 let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
-let shopList = "france"; // liste affichée : "france" | "suisse"
+let adminCatSort = "alpha"; // tri de la liste Admin > Catégories : "alpha" | "carrefour" | "coop" (affichage seulement)
+let shopList = "france";// liste affichée : "france" | "suisse"
 const SHOP_LISTS = {
   france: { label: "France", custom: "Carrefour Segny", pos: "pos_carrefour" },
   suisse: { label: "Suisse", custom: "Coop Vich", pos: "pos_coop" },
@@ -1892,13 +1893,20 @@ $("shop-preview-yes").addEventListener("click", async () => {
 // ------------------------------------------------- Admin : catégories de courses
 function renderCategoriesAdmin(root) {
   root.append(button("btn-primary admin-add", "+ Ajouter une catégorie", () => openCategoryDialog(null)));
+  // Tri de la liste : alphabétique ou ordre d'un des deux tris custom (rangs de 1 à N). Affichage seulement.
+  const sorts = el("div", "segment mini");
+  for (const [key, label] of [["alpha", "A → Z"], ["carrefour", "Carrefour Segny"], ["coop", "Coop Vich"]]) {
+    sorts.append(button("seg" + (adminCatSort === key ? " on" : ""), label, () => { adminCatSort = key; renderAdmin(); }));
+  }
+  root.append(sorts);
   const list = el("ul", "food-list");
   root.append(list);
   if (!shopCats.length) {
     list.append(el("li", "empty", "Les listes de courses ne sont pas encore activées dans la base."));
     return;
   }
-  for (const c of catsByName()) {
+  const order = { carrefour: (a, b) => a.pos_carrefour - b.pos_carrefour, coop: (a, b) => a.pos_coop - b.pos_coop };
+  for (const c of adminCatSort === "alpha" ? catsByName() : [...shopCats].sort(order[adminCatSort])) {
     const li = el("li", "food-row");
     const name = el("span", "fname", c.name);
     name.append(el("span", "cls-pill", `Carrefour ${c.pos_carrefour}`), el("span", "cls-pill", `Coop ${c.pos_coop}`));
@@ -2020,6 +2028,7 @@ function lock() {
   for (const d of [shopGenDialog, shopPreviewDialog, shopItemDialog, shopEditDialog, categoryDialog]) d.open && d.close();
   try { sessionStorage.removeItem(SORT_KEY); } catch {}
   shopSorts = defaultShopSorts();
+  adminCatSort = "alpha";
   shopList = "france";
   shopCats = [];
   shopItems = [];
