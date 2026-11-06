@@ -606,7 +606,6 @@
       }
 
       case "set_shop_item_checked": {
-        if (role !== "write" && role !== "admin") return fail("forbidden");
         const s = shopItems.find((x) => x.id === a.iid);
         if (!s) return fail("unknown_item");
         s.checked = !!a.chk;
