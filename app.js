@@ -1663,7 +1663,7 @@ function shopRow(it, showCategory, editable) {
   const cb = el("input");
   cb.type = "checkbox";
   cb.checked = it.checked;
-  cb.disabled = !editable;
+  cb.disabled = false; // tous les rôles peuvent cocher (migration 015)
   cb.setAttribute("aria-label", `${it.name} : acheté`);
   cb.addEventListener("change", () => toggleShopItem(it, cb.checked, li, cb));
   const main = el(editable ? "button" : "div", "shop-main");

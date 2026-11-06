@@ -1654,7 +1654,7 @@ begin
 end;
 $$;
 
--- Coche ou décoche un élément (rôles write et admin). Non consigné dans l'audit.
+-- Coche ou décoche un élément (rôles read, write et admin). Non consigné dans l'audit.
 create or replace function food.set_shop_item_checked(u text, p text, iid bigint, chk boolean)
 returns void
 language plpgsql
@@ -1662,7 +1662,7 @@ security definer
 set search_path = food, extensions
 as $$
 begin
-  perform food._check(u, p, array['write', 'admin']);
+  perform food._check(u, p, array['read', 'write', 'admin']);
   update food.shop_items set checked = coalesce(chk, false) where id = iid;
   if not found then
     raise exception 'unknown_item';

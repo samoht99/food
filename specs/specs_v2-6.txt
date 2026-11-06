@@ -16,4 +16,9 @@ Specs V2-6 : tri de la liste des catégories de courses
 2-6- une ligne sous la barre donne le nombre de résultats et de filtres actifs (la recherche compte pour un) ; sans résultat : « Aucun résultat » (ou « Aucun aliment / ingrédient / contrainte / catégorie » si rien n'est filtré)
 2-7- les filtres sont gardés par section tant qu'on reste sur le site (changer de section ne les efface pas) ; ils sont remis à zéro au rechargement et à la déconnexion
 2-8- les onglets de classes de la section Aliments disparaissent (remplacés par le filtre « Classe ») : « + Ajouter un aliment » ne coche aucune classe d'office, on choisit celle(s) à cocher. Le tri de la liste des catégories a son propre bouton « + Tri ▾ » (1-1)
-2-9- aucune migration : seul le site change
+2-9- aucune migration pour les filtres et le tri : seul le site change
+
+3- droits sur les listes de courses
+3-1- le rôle read peut cocher et décocher les éléments des listes de courses (France et Suisse), comme write et admin : sans confirmation, partagé entre tous les appareils, non consigné dans l audit. Cela remplace la règle 1-6 des specs V2-5 pour la case à cocher uniquement
+3-2- read ne peut toujours rien d autre sur les listes : pas d ajout, de modification, de déplacement, de suppression, de vidage ni de génération (boutons masqués, appui sur un élément sans effet)
+3-3- migration : exécuter supabase/migrations/015_reader_can_check.sql (seule la fonction set_shop_item_checked change). Avant ce script, la case est cochable par read à l écran mais la base refuse : la case revient en arrière avec un message d erreur
