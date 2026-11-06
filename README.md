@@ -59,6 +59,8 @@ Sur une base déjà installée (v1), dans Supabase (**SQL Editor**), dans cet or
 
 13. Exécuter `supabase/migrations/015_reader_can_check.sql` (le rôle read peut cocher et décocher les éléments des listes de courses).
 
+14. Exécuter `supabase/migrations/016_secret_list_autre.sql` (liste de courses « Autre », réservée à l'admin).
+
 ## Actions réservées au SQL
 
 Le site ne permet pas ces actions, elles se font dans Supabase (**SQL Editor**) :
@@ -135,7 +137,7 @@ Supprimer un utilisateur : `delete from food.users where user_id = 'thomas';`
   ```
 - « Aujourd'hui » est calculé en heure de Zurich.
 
-- **Listes de courses** (onglet Courses, tables `food.shop_categories` et `food.shop_items`) : deux listes, France et Suisse, partagées entre tous les appareils. Chaque élément a un nom libre, une catégorie, une quantité et une unité facultatives et une case cochée ; il n'a aucun lien avec les ingrédients. La liste France se génère à partir des repas des jours choisis (à partir d'aujourd'hui) : tous les ingrédients sont additionnés (quantité de base × portions), avec trois modes : écraser, ajouter à la fin, fusionner. Deux éléments ne se fusionnent que s'ils ont le même nom, la même unité et la même catégorie, qu'aucun n'est coché et que la catégorie n'est pas « ne s'additionne pas » (viande, poisson : une ligne par repas). La liste Suisse se remplit à la main (ou en déplaçant un élément de France). Les éléments restent en base jusqu'à leur suppression, au vidage de la liste ou à l'écrasement par une génération. Les tris (A → Z, date d'ajout, Carrefour Segny pour France, Coop Vich pour Suisse) sont propres à la session et disparaissent à la déconnexion. Lecture et case à cocher pour tous (read compris), le reste pour write et admin.
+- **Listes de courses** (onglet Courses, tables `food.shop_categories` et `food.shop_items`) : deux listes, France et Suisse, partagées entre tous les appareils. Chaque élément a un nom libre, une catégorie, une quantité et une unité facultatives et une case cochée ; il n'a aucun lien avec les ingrédients. La liste France se génère à partir des repas des jours choisis (à partir d'aujourd'hui) : tous les ingrédients sont additionnés (quantité de base × portions), avec trois modes : écraser, ajouter à la fin, fusionner. Deux éléments ne se fusionnent que s'ils ont le même nom, la même unité et la même catégorie, qu'aucun n'est coché et que la catégorie n'est pas « ne s'additionne pas » (viande, poisson : une ligne par repas). La liste Suisse se remplit à la main (ou en déplaçant un élément de France). Les éléments restent en base jusqu'à leur suppression, au vidage de la liste ou à l'écrasement par une génération. Les tris (A → Z, date d'ajout, Carrefour Segny pour France, Coop Vich pour Suisse) sont propres à la session et disparaissent à la déconnexion. Lecture et case à cocher pour tous (read compris), le reste pour write et admin. Une troisième liste « Autre » (tris A → Z, date, Carrefour Segny, Coop Vich), masquée par le site, n'est visible et modifiable que par l'admin.
 
 ## Journal d'audit
 
