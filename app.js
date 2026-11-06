@@ -74,6 +74,7 @@ let adminSection = "foods"; // onglet Admin : "foods" | "ingredients" | "constra
 let currentTab = "home";
 let today = "";
 let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
+let shopNames = []; // [{ name, unit_id, category_id }] : noms d'ingrédients proposés à l'ajout d'un élément (write et admin)
 let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
 let shopList = "france";// liste affichée : "france" | "suisse" | "autre" (réservée à l'admin)
 const CARREFOUR = { key: "carrefour", label: "Carrefour Segny", pos: "pos_carrefour" };
@@ -1579,8 +1580,10 @@ const catsByName = () => [...shopCats].sort((a, b) => a.name.localeCompare(b.nam
 // strict : une erreur est remontée (actualisation) ; sinon un échec laisse les listes vides (base pas encore à jour).
 async function loadShop(strict = false) {
   const get = (name) => (strict ? rpc(name, auth()) : optional(rpc(name, auth())));
-  const [cats, items] = await Promise.all([get("get_shop_categories"), get("get_shop_items")]);
+  const [cats, items, names] = await Promise.all([get("get_shop_categories"), get("get_shop_items"),
+    canEditShop() ? optional(rpc("get_ingredient_names", auth())) : []]);
   shopCats = cats;
+  shopNames = names || [];
   shopItems = items.filter((i) => i.list !== "autre" || role === "admin").map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
 }
 
@@ -1758,6 +1761,39 @@ async function deleteShopItem(it) {
 }
 
 // ---- Élément : ajout et modification
+// Suggestions de noms (ingrédients) à l'ajout d'un élément : choisir une suggestion remplit le nom, la catégorie et
+// l'unité (modifiables). Simple aide à la saisie : aucun lien n'est gardé avec l'ingrédient.
+const shopSuggestBox = el("ul", "shop-suggest");
+shopSuggestBox.hidden = true;
+$("shop-edit-name").after(shopSuggestBox);
+function hideShopSuggest() { shopSuggestBox.hidden = true; shopSuggestBox.replaceChildren(); }
+function showShopSuggest() {
+  const q = fold($("shop-edit-name").value.trim());
+  hideShopSuggest();
+  if (shopEditing || !q) return;
+  const hits = shopNames.filter((n) => fold(n.name).includes(q) && fold(n.name) !== q)
+    .sort((a, b) => (fold(a.name).startsWith(q) ? 0 : 1) - (fold(b.name).startsWith(q) ? 0 : 1) || a.name.localeCompare(b.name, "fr"))
+    .slice(0, 6);
+  for (const n of hits) {
+    const li = el("li");
+    const b = button("shop-suggest-item", n.name, () => pickShopSuggest(n));
+    b.addEventListener("mousedown", (e) => e.preventDefault()); // garde le focus dans le champ
+    li.append(b);
+    shopSuggestBox.append(li);
+  }
+  shopSuggestBox.hidden = !hits.length;
+}
+function pickShopSuggest(n) {
+  $("shop-edit-name").value = n.name;
+  const cat = n.category_id && shopCats.some((c) => c.id === n.category_id) ? n.category_id : defaultShopCat().id;
+  $("shop-edit-category").value = String(cat);
+  const q = shopQty.value();
+  shopQty = qtyField($("shop-edit-qty"), Number.isNaN(q) ? null : q, n.unit_id || null);
+  hideShopSuggest();
+}
+$("shop-edit-name").addEventListener("input", showShopSuggest);
+$("shop-edit-name").addEventListener("blur", hideShopSuggest);
+
 const shopEditDialog = $("shop-edit-dialog");
 const shopEditError = $("shop-edit-error");
 let shopEditing = null; // élément modifié, ou null pour un ajout
@@ -1809,6 +1845,7 @@ function openShopEdit(it) {
   for (const c of catsByName()) sel.append(new Option(c.name, c.id, false, c.id === current));
   shopQty = qtyField($("shop-edit-qty"), it ? it.quantity : null, it ? it.unit_id : null);
   shopEditError.textContent = "";
+  hideShopSuggest();
   shopEditDialog.showModal();
   if (!it) $("shop-edit-name").focus();
 }
