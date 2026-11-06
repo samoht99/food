@@ -75,19 +75,23 @@ let currentTab = "home";
 let today = "";
 let shopCats = []; // [{ id, name, pos_carrefour, pos_coop, no_merge, is_default, uses }] : catégories de courses (vide : base pas encore à jour)
 let shopItems = []; // [{ id, list, name, category_id, quantity, unit_id, checked }] : éléments des listes de courses
-let shopList = "france";// liste affichée : "france" | "suisse"
+let shopList = "france";// liste affichée : "france" | "suisse" | "autre" (réservée à l'admin)
+const CARREFOUR = { key: "carrefour", label: "Carrefour Segny", pos: "pos_carrefour" };
+const COOP = { key: "coop", label: "Coop Vich", pos: "pos_coop" };
 const SHOP_LISTS = {
-  france: { label: "France", custom: "Carrefour Segny", pos: "pos_carrefour" },
-  suisse: { label: "Suisse", custom: "Coop Vich", pos: "pos_coop" },
+  france: { label: "France", customs: [CARREFOUR] },
+  suisse: { label: "Suisse", customs: [COOP] },
+  autre: { label: "Autre", customs: [CARREFOUR, COOP], adminOnly: true }, // secrète : visible et modifiable par l'admin seulement
 };
+const visibleLists = () => Object.keys(SHOP_LISTS).filter((k) => !SHOP_LISTS[k].adminOnly || role === "admin");
 // Tri de chaque liste : propre à la session (onglet en cours), perdu à la déconnexion. Par défaut : A → Z.
 const SORT_KEY = "food_shop_sort";
-const defaultShopSorts = () => ({ france: "alpha", suisse: "alpha" });
+const defaultShopSorts = () => ({ france: "alpha", suisse: "alpha", autre: "alpha" });
 function readShopSorts() {
   const sorts = defaultShopSorts();
   try {
     const s = JSON.parse(sessionStorage.getItem(SORT_KEY) || "{}");
-    for (const k of Object.keys(sorts)) if (["alpha", "date", "custom"].includes(s[k])) sorts[k] = s[k];
+    for (const k of Object.keys(sorts)) if (["alpha", "date", ...SHOP_LISTS[k].customs.map((c) => c.key)].includes(s[k])) sorts[k] = s[k];
   } catch {}
   return sorts;
 }
@@ -1568,7 +1572,7 @@ $("food-edit-save").addEventListener("click", async () => {
 const canEditShop = () => role === "write" || role === "admin";
 const shopCatOf = (id) => shopCats.find((c) => c.id === id) || { name: "Autre", pos_carrefour: 999, pos_coop: 999 };
 const defaultShopCat = () => shopCats.find((c) => c.is_default) || shopCats[0];
-const otherShopList = (k) => (k === "france" ? "suisse" : "france");
+const moveTargets = (k) => visibleLists().filter((x) => x !== k);
 const plural = (n, one, many) => (n > 1 ? many : one);
 const catsByName = () => [...shopCats].sort((a, b) => a.name.localeCompare(b.name, "fr"));
 
@@ -1577,7 +1581,7 @@ async function loadShop(strict = false) {
   const get = (name) => (strict ? rpc(name, auth()) : optional(rpc(name, auth())));
   const [cats, items] = await Promise.all([get("get_shop_categories"), get("get_shop_items")]);
   shopCats = cats;
-  shopItems = items.map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
+  shopItems = items.filter((i) => i.list !== "autre" || role === "admin").map((i) => ({ ...i, quantity: i.quantity === null ? null : Number(i.quantity) }));
 }
 
 async function refreshShop() {
@@ -1599,8 +1603,9 @@ function sortedShopItems(list) {
   const byName = (a, b) => fold(a.name).localeCompare(fold(b.name), "fr") || (a.quantity || 0) - (b.quantity || 0) || a.id - b.id;
   const mode = shopSorts[list];
   if (mode === "date") return items.sort((a, b) => a.id - b.id);
-  if (mode === "custom") {
-    const pos = SHOP_LISTS[list].pos;
+  const custom = SHOP_LISTS[list].customs.find((c) => c.key === mode);
+  if (custom) {
+    const pos = custom.pos;
     return items.sort((a, b) => shopCatOf(a.category_id)[pos] - shopCatOf(b.category_id)[pos] || byName(a, b));
   }
   return items.sort(byName);
@@ -1617,7 +1622,7 @@ function renderShop() {
   const editable = canEditShop();
   const conf = SHOP_LISTS[shopList];
   const seg = el("div", "segment");
-  for (const k of Object.keys(SHOP_LISTS)) {
+  for (const k of visibleLists()) {
     const n = shopItems.filter((i) => i.list === k).length;
     seg.append(button("seg" + (k === shopList ? " on" : ""), `${SHOP_LISTS[k].label} (${n})`, () => { shopList = k; renderShop(); }));
   }
@@ -1635,7 +1640,7 @@ function renderShop() {
   const mode = shopSorts[shopList];
   const sorts = el("div", "shop-sorts");
   sorts.append(el("span", "shop-sorts-label", "Tri"));
-  for (const [key, label] of [["alpha", "A → Z"], ["date", "Date d'ajout"], ["custom", conf.custom]]) {
+  for (const [key, label] of [["alpha", "A → Z"], ["date", "Date d'ajout"], ...conf.customs.map((c) => [c.key, c.label])]) {
     sorts.append(button("chip" + (mode === key ? " on" : ""), label, () => {
       shopSorts[shopList] = key;
       saveShopSorts();
@@ -1644,16 +1649,17 @@ function renderShop() {
   }
   root.append(sorts);
 
+  const isCustom = conf.customs.some((c) => c.key === mode);
   const items = sortedShopItems(shopList);
   const list = el("ul", "shop-list");
   if (!items.length) list.append(el("li", "empty", "Cette liste est vide."));
   let lastCat = null;
   for (const it of items) {
-    if (mode === "custom" && it.category_id !== lastCat) {
+    if (isCustom && it.category_id !== lastCat) {
       list.append(el("li", "shop-head", shopCatOf(it.category_id).name));
       lastCat = it.category_id;
     }
-    list.append(shopRow(it, mode !== "custom", editable));
+    list.append(shopRow(it, !isCustom, editable));
   }
   root.append(list);
 }
@@ -1715,21 +1721,19 @@ $("shop-item-close").addEventListener("click", () => shopItemDialog.close());
 
 function openShopItemMenu(it) {
   const label = SHOP_LISTS[it.list].label;
-  const other = otherShopList(it.list);
   $("shop-item-title").textContent = it.name;
   $("shop-item-meta").textContent = [fmtShopQty(it), shopCatOf(it.category_id).name, `liste ${label}`].filter(Boolean).join(" · ");
   $("shop-item-error").textContent = "";
   const menu = $("shop-item-menu");
   menu.replaceChildren(
     button("btn-sm", "Modifier", () => { shopItemDialog.close(); openShopEdit(it); }),
-    button("btn-sm", `Déplacer vers ${SHOP_LISTS[other].label}`, () => { shopItemDialog.close(); moveShopItem(it); }),
+    ...moveTargets(it.list).map((to) => button("btn-sm", `Déplacer vers ${SHOP_LISTS[to].label}`, () => { shopItemDialog.close(); moveShopItem(it, to); })),
     button("btn-sm danger", "Supprimer", () => { shopItemDialog.close(); deleteShopItem(it); }),
   );
   shopItemDialog.showModal();
 }
 
-async function moveShopItem(it) {
-  const to = otherShopList(it.list);
+async function moveShopItem(it, to) {
   const ok = await confirmAction(`Déplacer vers la liste ${SHOP_LISTS[to].label} ?`,
     `${it.name}${fmtShopQty(it) ? " · " + fmtShopQty(it) : ""}. Il est fusionné avec un élément identique de cette liste s'il y en a un.`);
   if (!ok) return;

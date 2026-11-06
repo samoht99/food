@@ -106,7 +106,7 @@ create index if not exists food_ingredients_ingredient_idx on food.food_ingredie
 -- supprime, vide la liste ou écrase la liste par une génération.
 create table if not exists food.shop_items (
   id          bigint generated always as identity primary key,
-  list        text          not null check (list in ('france', 'suisse')),
+  list        text          not null check (list in ('france', 'suisse', 'autre')),
   name        text          not null check (name = btrim(name) and name <> '' and char_length(name) <= 60),
   category_id smallint      not null references food.shop_categories (id) on delete restrict,
   quantity    numeric(10, 3) check (quantity > 0),
@@ -1610,7 +1610,7 @@ declare
   put jsonb;
 begin
   r := food._check(u, p, array['write', 'admin']);
-  if lst is null or lst not in ('france', 'suisse') then
+  if lst is null or lst not in ('france', 'suisse', 'autre') then
     raise exception 'invalid_list';
   end if;
   perform food._shop_check_item(n, c, q, uid);
@@ -1703,7 +1703,7 @@ declare
   n integer;
 begin
   r := food._check(u, p, array['write', 'admin']);
-  if lst is null or lst not in ('france', 'suisse') then
+  if lst is null or lst not in ('france', 'suisse', 'autre') then
     raise exception 'invalid_list';
   end if;
   select count(*) into n from food.shop_items s where s.list = lst;
@@ -1731,7 +1731,7 @@ declare
   prev numeric;
 begin
   r := food._check(u, p, array['write', 'admin']);
-  if to_list is null or to_list not in ('france', 'suisse') then
+  if to_list is null or to_list not in ('france', 'suisse', 'autre') then
     raise exception 'invalid_list';
   end if;
   select s.* into itm from food.shop_items s where s.id = iid;

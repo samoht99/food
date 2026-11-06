@@ -22,3 +22,10 @@ Specs V2-6 : tri de la liste des catégories de courses
 3-1- le rôle read peut cocher et décocher les éléments des listes de courses (France et Suisse), comme write et admin : sans confirmation, partagé entre tous les appareils, non consigné dans l audit. Cela remplace la règle 1-6 des specs V2-5 pour la case à cocher uniquement
 3-2- read ne peut toujours rien d autre sur les listes : pas d ajout, de modification, de déplacement, de suppression, de vidage ni de génération (boutons masqués, appui sur un élément sans effet)
 3-3- migration : exécuter supabase/migrations/015_reader_can_check.sql (seule la fonction set_shop_item_checked change). Avant ce script, la case est cochable par read à l écran mais la base refuse : la case revient en arrière avec un message d erreur
+
+4- liste secrète « Autre »
+4-1- une troisième liste de courses « Autre » existe à côté de France et Suisse. Elle n est visible (onglet, compteur) et modifiable que par le rôle admin : read et write ne la voient pas. Le masquage est fait par le site, pas par la base
+4-2- même comportement que la liste Suisse (remplie à la main, case à cocher, ajout, modification, suppression, vidage, pas de génération), avec deux tris custom en plus de A → Z et Date d ajout : Carrefour Segny et Coop Vich
+4-3- l admin peut déplacer un élément entre les trois listes (règle de fusion appliquée) ; pour write le menu ne propose que France et Suisse
+4-4- actions consignées dans l audit comme pour les autres listes (shop_add, shop_update, shop_delete, shop_move, shop_clear)
+4-5- migration : exécuter supabase/migrations/016_secret_list_autre.sql (la table et trois fonctions acceptent la liste autre). Avant ce script, la liste Autre apparaît pour l admin mais la base refuse d y écrire

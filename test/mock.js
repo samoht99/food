@@ -282,6 +282,8 @@
   shopPut("suisse", "chocolat noir", EPICERIE, 3, PIECE, false);
   shopPut("suisse", "fromage à raclette", CREMERIE, 600, G, false);
   shopPut("suisse", "papier toilette", AUTRE, 1, PIECE, false);
+  shopPut("autre", "cadeau anniversaire", AUTRE, 1, PIECE, false);
+  shopPut("autre", "piles AA", EPICERIE, 4, PIECE, false);
 
   const fail = (message, details) => ({ ok: false, status: 400, json: async () => ({ message, details }) });
   const ok = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body), json: async () => body });
@@ -583,7 +585,7 @@
 
       case "add_shop_item": {
         if (role !== "write" && role !== "admin") return fail("forbidden");
-        if (!["france", "suisse"].includes(a.lst)) return fail("invalid_list");
+        if (!["france", "suisse", "autre"].includes(a.lst)) return fail("invalid_list");
         const cid = a.cid === undefined || a.cid === null ? AUTRE : a.cid;
         const err = shopItemError(a.n, cid, a.q, a.uid);
         if (err) return fail(err);
@@ -621,14 +623,14 @@
 
       case "clear_shop_list": {
         if (role !== "write" && role !== "admin") return fail("forbidden");
-        if (!["france", "suisse"].includes(a.lst)) return fail("invalid_list");
+        if (!["france", "suisse", "autre"].includes(a.lst)) return fail("invalid_list");
         for (let i = shopItems.length - 1; i >= 0; i--) if (shopItems[i].list === a.lst) shopItems.splice(i, 1);
         return voidOk();
       }
 
       case "move_shop_item": {
         if (role !== "write" && role !== "admin") return fail("forbidden");
-        if (!["france", "suisse"].includes(a.to_list)) return fail("invalid_list");
+        if (!["france", "suisse", "autre"].includes(a.to_list)) return fail("invalid_list");
         const s = shopItems.find((x) => x.id === a.iid);
         if (!s) return fail("unknown_item");
         if (s.list === a.to_list) return ok({ merged: false, id: s.id });
