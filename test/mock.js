@@ -487,6 +487,12 @@
         return voidOk();
       }
 
+      case "get_ingredient_names": {
+        if (role !== "write" && role !== "admin") return fail("forbidden");
+        return ok([...ingredients].sort((x, y) => x.name.localeCompare(y.name, "fr"))
+          .map((i) => ({ name: i.name, unit_id: i.unit_id, category_id: i.category_id || null })));
+      }
+
       case "get_ingredients": {
         if (role !== "admin") return fail("forbidden");
         return ok([...ingredients]

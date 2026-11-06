@@ -61,6 +61,8 @@ Sur une base déjà installée (v1), dans Supabase (**SQL Editor**), dans cet or
 
 14. Exécuter `supabase/migrations/016_secret_list_autre.sql` (liste de courses « Autre », réservée à l'admin).
 
+15. Exécuter `supabase/migrations/017_ingredient_suggestions.sql` (suggestions de noms d'ingrédients à l'ajout d'un élément de liste de courses). Le site marche aussi avant ce script, sans les suggestions.
+
 ## Actions réservées au SQL
 
 Le site ne permet pas ces actions, elles se font dans Supabase (**SQL Editor**) :

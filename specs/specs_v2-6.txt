@@ -29,3 +29,9 @@ Specs V2-6 : tri de la liste des catégories de courses
 4-3- l admin peut déplacer un élément entre les trois listes (règle de fusion appliquée) ; pour write le menu ne propose que France et Suisse
 4-4- actions consignées dans l audit comme pour les autres listes (shop_add, shop_update, shop_delete, shop_move, shop_clear)
 4-5- migration : exécuter supabase/migrations/016_secret_list_autre.sql (la table et trois fonctions acceptent la liste autre). Avant ce script, la liste Autre apparaît pour l admin mais la base refuse d y écrire
+
+5- suggestions à l ajout d un élément
+5-1- dans le popup « Ajouter à la liste... » (pas en modification), en tapant le nom, une liste de 6 noms d ingrédients au plus est proposée sous le champ : ceux qui contiennent le texte tapé (sans tenir compte des accents ni des majuscules), ceux qui commencent par le texte d abord, puis ordre alphabétique. Aucune suggestion si le texte est vide ou identique à un ingrédient
+5-2- choisir une suggestion remplit le nom, la catégorie de courses de l ingrédient (« Autre » s il n en a pas) et son unité ; la quantité déjà tapée est gardée. Tout reste modifiable. Le nom saisi reste un texte libre : aucun lien n est conservé avec l ingrédient et on peut ignorer les suggestions
+5-3- suggestions pour write et admin seulement (read n ajoute rien). Aucune table ni donnée en plus
+5-4- migration : exécuter supabase/migrations/017_ingredient_suggestions.sql (nouvelle fonction de lecture get_ingredient_names). Avant ce script, le site marche comme avant, sans suggestions
